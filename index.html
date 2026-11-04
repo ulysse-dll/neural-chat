@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cut">
+<title>Neural Chat — Ollama</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: radial-gradient(ellipse at 50% 40%, #1d2266 0%, #0e1238 42%, #05060f 100%);
+    color: #e6e8ff;
+    font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  #brain { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #brain.dragging { cursor: grabbing; }
+
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px;
+    padding: max(10px, env(safe-area-inset-top)) 16px 10px;
+    font-size: 12px; color: rgba(230, 232, 255, .55);
+    pointer-events: none;
+  }
+  #hud > * { pointer-events: auto; }
+  #hud b { color: rgba(230, 232, 255, .9); font-weight: 500; }
+  #model {
+    background: rgba(255, 255, 255, .06); color: #e6e8ff;
+    border: 1px solid rgba(255, 255, 255, .15); border-radius: 6px;
+    font: inherit; padding: 3px 6px; max-width: 46vw;
+  }
+  #model option { background: #0e1238; }
+  #mode { padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .2); cursor: pointer; }
+  #mode.live { color: #7dffb0; border-color: rgba(125, 255, 176, .35); }
+  #mode.demo { color: #ffd93b; border-color: rgba(255, 217, 59, .5); background: rgba(255, 217, 59, .08); }
+
+  #bottom {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 0 12px max(12px, env(safe-area-inset-bottom));
+    pointer-events: none;
+  }
+  #log {
+    width: 100%; max-width: 820px; height: 38vh; overflow-y: auto;
+    padding: 18vh 4px 8px; pointer-events: auto;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 45%);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 45%);
+    scrollbar-width: none;
+  }
+  #log::-webkit-scrollbar { display: none; }
+  .msg { margin: 0 0 12px; white-space: pre-wrap; word-wrap: break-word; }
+  .user { color: #9aa3ff; }
+  .user::before { content: "› "; color: #ff3b4e; }
+  .think { color: rgba(200, 204, 230, .45); font-style: italic; margin-bottom: 4px; }
+  .think:empty, .ans:empty { display: none; }
+  .ans { color: #f1f2ff; }
+  .sys { color: rgba(230, 232, 255, .45); font-size: 12px; }
+  .err { color: #ff7a86; font-size: 12px; }
+  .msg.streaming .ans::after, .msg.streaming .think:not(:empty)::after {
+    content: "▍"; color: #ff3b4e; animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  #form { width: 100%; max-width: 820px; display: flex; gap: 8px; pointer-events: auto; }
+  #input {
+    flex: 1; background: rgba(5, 6, 20, .55); color: #f1f2ff;
+    border: 1px solid rgba(255, 255, 255, .14); border-radius: 8px;
+    padding: 10px 12px; font: inherit; font-size: 16px; outline: none;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  }
+  #input:focus { border-color: rgba(255, 59, 78, .55); }
+  #send {
+    background: rgba(255, 59, 78, .15); color: #ff8f99; border: 1px solid rgba(255, 59, 78, .4);
+    border-radius: 8px; padding: 0 14px; font: inherit; cursor: pointer;
+  }
+  #hint { font-size: 11px; color: rgba(230, 232, 255, .3); margin-top: 6px; }
+</style>
+</head>
+<body>
+<canvas id="brain"></canvas>
+
+<div id="hud">
+  <select id="model" title="Modèle"></select>
+  <span>tok/s <b id="tps">0.0</b></span>
+  <span>tokens <b id="count">0</b></span>
+  <span>1er token <b id="ttft">—</b></span>
+  <span id="mode" title="Cliquer pour retenter la connexion">…</span>
+</div>
+
+<div id="bottom">
+  <div id="log"></div>
+  <form id="form" autocomplete="off">
+    <input id="input" placeholder="Écris un message…" enterkeyhint="send">
+    <button id="send" type="submit">↵</button>
+  </form>
+  <div id="hint">Entrée : envoyer · Échap : stopper</div>
+</div>
+
+<script>
+// ================= CONFIG =================
+const CONFIG = {
+  OLLAMA_URL: 'http://localhost:11434',
+  NEURONS: 220,
+  NEIGHBORS: 4,          // liaisons vers les plus proches voisins
+  LONG_LINKS: 70,        // liaisons longues qui traversent la sphère
+  SYSTEM_PROMPT: 'Tu es un assistant concis et utile. Réponds en français sauf si on te parle dans une autre langue.',
+  LOGPROBS: true,        // demande la confiance du modèle sur chaque token
+};
+// ==========================================
+
+// ---------- Neural sphere ----------
+const neural = (() => {
+  const canvas = document.getElementById('brain');
+  const ctx = canvas.getContext('2d');
+  const N = CONFIG.NEURONS;
+  const RED = [255, 59, 78], ORANGE = [255, 138, 43], YELLOW = [255, 217, 59];
+  const LEVELS = 6; // 0 = sûr (rouge) … 5 = incertain (jaune)
+
+  // Neurons on a Fibonacci spiral with a little jitter
+  const px = new Float32Array(N), py = new Float32Array(N), pz = new Float32Array(N);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (i + 0.5) / N * 2, r = Math.sqrt(1 - y * y), a = i * golden;
+    let x = Math.cos(a) * r + (Math.random() - .5) * .09;
+    let yy = y + (Math.random() - .5) * .09;
+    let z = Math.sin(a) * r + (Math.random() - .5) * .09;
+    const k = (0.94 + Math.random() * 0.08) / Math.hypot(x, yy, z);
+    px[i] = x * k; py[i] = yy * k; pz[i] = z * k;
+  }
+
+  // Links: nearest neighbours + long links through the sphere
+  const ea = [], eb = [], edgeIndex = new Map(), adj = Array.from({ length: N }, () => []);
+  const dist2 = (i, j) => (px[i] - px[j]) ** 2 + (py[i] - py[j]) ** 2 + (pz[i] - pz[j]) ** 2;
+  function link(i, j) {
+    const key = i < j ? i * N + j : j * N + i;
+    if (i === j || edgeIndex.has(key)) return false;
+    edgeIndex.set(key, ea.length);
+    adj[i].push(j, ea.length); adj[j].push(i, ea.length);
+    ea.push(i); eb.push(j);
+    return true;
+  }
+  for (let i = 0; i < N; i++) {
+    const order = [...Array(N).keys()].filter(j => j !== i).sort((a, b) => dist2(i, a) - dist2(i, b));
+    for (let k = 0; k < CONFIG.NEIGHBORS; k++) link(i, order[k]);
+  }
+  for (let made = 0, tries = 0; made < CONFIG.LONG_LINKS && tries < 10000; tries++) {
+    const i = Math.random() * N | 0, j = Math.random() * N | 0;
+    if (dist2(i, j) > 1.8 && link(i, j)) made++;
+  }
+  const E = ea.length;
+  const edgeHeat = new Float32Array(E), edgeLvl = new Uint8Array(E);
+  const nodeHeat = new Float32Array(N), nodeLvl = new Uint8Array(N);
+  const hotEdges = new Set(), hotNodes = new Set();
+
+  // Colours and halo sprites per confidence level
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const mix = (c1, c2, t) => c1.map((v, i) => Math.round(lerp(v, c2[i], t)));
+  const levelRGB = Array.from({ length: LEVELS }, (_, l) => {
+    const t = l / (LEVELS - 1);
+    return t < .5 ? mix(RED, ORANGE, t * 2) : mix(ORANGE, YELLOW, (t - .5) * 2);
+  });
+  const levelCSS = levelRGB.map(c => `rgb(${c})`);
+  const halos = levelRGB.map(c => {
+    const s = document.createElement('canvas'); s.width = s.height = 64;
+    const g = s.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, `rgba(${c},1)`); grad.addColorStop(.25, `rgba(${c},.55)`); grad.addColorStop(1, `rgba(${c},0)`);
+    g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+    return s;
+  });
+  const confidenceLevel = c => c == null ? 0
+    : Math.round((1 - Math.min(1, Math.max(0, (c - .25) / .7))) * (LEVELS - 1));
+
+  // State
+  let W = 0, H = 0, dpr = 1, cx = 0, cy = 0, R = 0;
+  let yaw = 0, pitch = 0.35, velYaw = 0, velPitch = 0, dragging = false, lastPX = 0, lastPY = 0, lastPT = 0;
+  let activity = 0, manualActivity = 0, autoActivity = 0, thinking = false;
+  let ambientClock = 0, time = 0, last = performance.now();
+  const influxes = [];
+  const sx = new Float32Array(N), sy = new Float32Array(N), sz = new Float32Array(N);
+  const BUCKETS = 10, bucketEdges = Array.from({ length: BUCKETS }, () => new Int32Array(E)), bucketCount = new Int32Array(BUCKETS);
+  const bucketNodes = Array.from({ length: BUCKETS }, () => new Int32Array(N)), bucketNodeCount = new Int32Array(BUCKETS);
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    const mobile = W < 700;
+    cx = W / 2; cy = H * (mobile ? 0.3 : 0.42);
+    R = mobile ? Math.min(W * 0.4, H * 0.2) : Math.min(W, H) * 0.32;
+  }
+  addEventListener('resize', resize); resize();
+
+  // Rotation with mouse / finger and inertia
+  canvas.addEventListener('pointerdown', e => {
+    dragging = true; lastPX = e.clientX; lastPY = e.clientY; lastPT = performance.now();
+    velYaw = velPitch = 0; canvas.setPointerCapture(e.pointerId); canvas.classList.add('dragging');
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const now = performance.now(), dt = Math.max(1, now - lastPT) / 1000;
+    const dx = (e.clientX - lastPX) / R, dy = (e.clientY - lastPY) / R;
+    yaw += dx; pitch += dy;
+    velYaw = lerp(velYaw, dx / dt, .5); velPitch = lerp(velPitch, dy / dt, .5);
+    lastPX = e.clientX; lastPY = e.clientY; lastPT = now;
+  });
+  const endDrag = () => { dragging = false; canvas.classList.remove('dragging'); };
+  canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
+
+  // An influx: a random walk through the graph that lights the links it crosses
+  function spawn(level = 0) {
+    if (influxes.length > 70) return;
+    const len = 4 + Math.random() * 7 | 0, path = [Math.random() * N | 0], edges = [], seen = new Set(path);
+    while (path.length <= len) {
+      const n = path[path.length - 1], a = adj[n], opts = [];
+      for (let k = 0; k < a.length; k += 2) if (!seen.has(a[k])) opts.push(k);
+      if (!opts.length) break;
+      const k = opts[Math.random() * opts.length | 0];
+      path.push(a[k]); edges.push(a[k + 1]); seen.add(a[k]);
+    }
+    if (!edges.length) return;
+    heatNode(path[0], level);
+    influxes.push({ path, edges, step: 0, t: 0, speed: 6 + activity * 16, level });
+  }
+  function heatNode(n, level) { nodeHeat[n] = 1; nodeLvl[n] = level; hotNodes.add(n); }
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now; time += dt;
+
+    // Activity follows real data (tokens/s) or the manual level, smoothly
+    const target = Math.max(manualActivity, autoActivity, thinking ? 0.25 : 0);
+    activity = lerp(activity, target, 1 - Math.exp(-dt * 3));
+
+    // Rotation: slow auto spin + inertia
+    if (!dragging) {
+      yaw += (0.06 + activity * 0.55) * dt + velYaw * dt;
+      pitch += velPitch * dt;
+      const damp = Math.exp(-dt * 2.2); velYaw *= damp; velPitch *= damp;
+    }
+    pitch = Math.max(-1.3, Math.min(1.3, pitch));
+
+    // Background influxes, more frequent when busy
+    ambientClock += dt * (0.4 + activity * 7 + (thinking ? 2 : 0));
+    while (ambientClock >= 1) { ambientClock -= 1; spawn(0); }
+
+    // Advance influxes
+    for (let i = influxes.length - 1; i >= 0; i--) {
+      const f = influxes[i];
+      f.t += dt * f.speed;
+      while (f.t >= 1 && f.step < f.edges.length) {
+        f.t -= 1;
+        const e = f.edges[f.step];
+        edgeHeat[e] = 1; edgeLvl[e] = f.level; hotEdges.add(e);
+        heatNode(f.path[f.step + 1], f.level);
+        f.step++;
+      }
+      if (f.step >= f.edges.length) influxes.splice(i, 1);
+    }
+
+    // Project
+    const breath = 1 + Math.sin(time * (thinking ? 2.4 : 1.1)) * (0.022 + activity * 0.015);
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const D = 3.2, scale = R * breath;
+    bucketNodeCount.fill(0);
+    for (let i = 0; i < N; i++) {
+      const x1 = px[i] * cyw + pz[i] * syw, z1 = -px[i] * syw + pz[i] * cyw;
+      const y2 = py[i] * cp - z1 * sp, z2 = py[i] * sp + z1 * cp;
+      const p = D / (D - z2);
+      sx[i] = cx + x1 * p * scale; sy[i] = cy + y2 * p * scale; sz[i] = (z2 + 1) / 2; // 0 back, 1 front
+      const b = Math.min(BUCKETS - 1, sz[i] * BUCKETS | 0);
+      bucketNodes[b][bucketNodeCount[b]++] = i;
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+
+    // White links, grouped by depth so we stroke only 10 paths
+    bucketCount.fill(0);
+    for (let e = 0; e < E; e++) {
+      const b = Math.min(BUCKETS - 1, (sz[ea[e]] + sz[eb[e]]) * 0.5 * BUCKETS | 0);
+      bucketEdges[b][bucketCount[b]++] = e;
+    }
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.6;
+    for (let b = 0; b < BUCKETS; b++) {
+      if (!bucketCount[b]) continue;
+      ctx.globalAlpha = 0.03 + Math.pow((b + .5) / BUCKETS, 1.6) * 0.32;
+      ctx.beginPath();
+      const list = bucketEdges[b];
+      for (let k = 0; k < bucketCount[b]; k++) { const e = list[k]; ctx.moveTo(sx[ea[e]], sy[ea[e]]); ctx.lineTo(sx[eb[e]], sy[eb[e]]); }
+      ctx.stroke();
+    }
+
+    // White neurons
+    ctx.fillStyle = '#fff';
+    for (let b = 0; b < BUCKETS; b++) {
+      if (!bucketNodeCount[b]) continue;
+      const d = (b + .5) / BUCKETS;
+      ctx.globalAlpha = 0.12 + d * 0.8;
+      const r = 0.7 + d * 1.5;
+      ctx.beginPath();
+      const list = bucketNodes[b];
+      for (let k = 0; k < bucketNodeCount[b]; k++) { const i = list[k]; ctx.moveTo(sx[i] + r, sy[i]); ctx.arc(sx[i], sy[i], r, 0, 6.2832); }
+      ctx.fill();
+    }
+
+    // Lit links (glow = wide faint stroke + thin bright stroke, additive)
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    const fade = Math.exp(-dt * 2.6);
+    for (const e of hotEdges) {
+      const h = edgeHeat[e], a = ea[e], b = eb[e], depth = 0.3 + 0.7 * (sz[a] + sz[b]) / 2;
+      ctx.strokeStyle = levelCSS[edgeLvl[e]];
+      ctx.beginPath(); ctx.moveTo(sx[a], sy[a]); ctx.lineTo(sx[b], sy[b]);
+      ctx.globalAlpha = h * 0.22 * depth; ctx.lineWidth = 5; ctx.stroke();
+      ctx.globalAlpha = h * 0.95 * depth; ctx.lineWidth = 1.3; ctx.stroke();
+      edgeHeat[e] = h * fade;
+      if (edgeHeat[e] < 0.015) { edgeHeat[e] = 0; hotEdges.delete(e); }
+    }
+    // Moving heads of influxes
+    for (const f of influxes) {
+      const a = f.path[f.step], b = f.path[f.step + 1], t = f.t;
+      const hx = lerp(sx[a], sx[b], t), hy = lerp(sy[a], sy[b], t), depth = 0.3 + 0.7 * lerp(sz[a], sz[b], t);
+      ctx.strokeStyle = levelCSS[f.level];
+      ctx.beginPath(); ctx.moveTo(sx[a], sy[a]); ctx.lineTo(hx, hy);
+      ctx.globalAlpha = 0.25 * depth; ctx.lineWidth = 5; ctx.stroke();
+      ctx.globalAlpha = depth; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.globalAlpha = depth; const s = 14; ctx.drawImage(halos[f.level], hx - s / 2, hy - s / 2, s, s);
+    }
+    // Red halos on crossed neurons
+    const nfade = Math.exp(-dt * 2.0);
+    for (const n of hotNodes) {
+      const h = nodeHeat[n], s = (10 + h * 18) * (0.6 + sz[n] * 0.6);
+      ctx.globalAlpha = h * (0.35 + 0.65 * sz[n]);
+      ctx.drawImage(halos[nodeLvl[n]], sx[n] - s / 2, sy[n] - s / 2, s, s);
+      nodeHeat[n] = h * nfade;
+      if (nodeHeat[n] < 0.02) { nodeHeat[n] = 0; hotNodes.delete(n); }
+    }
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  return {
+    /** Fire n influxes. confidence (0..1, optional) sets the colour: red = sure, yellow = unsure. */
+    pulse(n = 1, confidence) { const l = confidenceLevel(confidence); for (let i = 0; i < n; i++) spawn(l); },
+    /** Thinking mode: faster breathing, steady background activity. */
+    think(on = true) { thinking = !!on; },
+    /** Manual activity level 0..1 (rotation speed and influx frequency). */
+    setActivity(v) { manualActivity = Math.max(0, Math.min(1, +v || 0)); },
+    _setAuto(v) { autoActivity = Math.max(0, Math.min(1, v)); },
+    get stats() { return { neurons: N, links: E, influxes: influxes.length, activity }; },
+  };
+})();
+window.neural = { pulse: neural.pulse, think: neural.think, setActivity: neural.setActivity };
+
+// ---------- Chat ----------
+const $ = id => document.getElementById(id);
+const logEl = $('log'), input = $('input'), modelSel = $('model'), modeEl = $('mode');
+const history = [];
+let live = false, controller = null, generating = false, modelCaps = {};
+const hud = { tokens: 0, tps: 0, ttft: null, start: 0, firstAt: 0, stamps: [] };
+
+function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40; }
+function addLine(cls, text) {
+  const stick = atBottom(), d = document.createElement('div');
+  d.className = 'msg ' + cls; d.textContent = text; logEl.appendChild(d);
+  if (stick) logEl.scrollTop = logEl.scrollHeight;
+  return d;
+}
+
+function setMode(isLive, reason) {
+  live = isLive;
+  modeEl.className = isLive ? 'live' : 'demo';
+  modeEl.textContent = isLive ? '● Ollama' : '◌ MODE DÉMO';
+  if (!isLive && reason) addLine('err', reason);
+}
+
+async function connect(quiet = false) {
+  try {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch(CONFIG.OLLAMA_URL + '/api/tags', { signal: ctl.signal });
+    clearTimeout(timer);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const models = (await r.json()).models || [];
+    if (!models.length) throw new Error('aucun modèle installé (ollama pull …)');
+    const saved = localStorage.getItem('neural.model');
+    modelSel.innerHTML = '';
+    for (const m of models) modelSel.add(new Option(m.name, m.name));
+    if (saved && models.some(m => m.name === saved)) modelSel.value = saved;
+    setMode(true);
+    loadCaps();
+    return true;
+  } catch (e) {
+    modelSel.innerHTML = ''; modelSel.add(new Option('démo', 'démo'));
+    const fileHint = location.protocol === 'file:'
+      ? "\nPage ouverte en file:// : Ollama refuse cette origine par défaut. Lance une fois dans le Terminal :\n  launchctl setenv OLLAMA_ORIGINS \"null\"\npuis quitte et relance l'app Ollama."
+      : '';
+    setMode(false, quiet ? '' : `Ollama injoignable sur ${CONFIG.OLLAMA_URL} (${e.message || e}). Réponses simulées.${fileHint}\nClique sur « MODE DÉMO » pour réessayer.`);
+    return false;
+  }
+}
+
+async function loadCaps() {
+  const name = modelSel.value;
+  if (!live || modelCaps[name]) return;
+  try {
+    const r = await fetch(CONFIG.OLLAMA_URL + '/api/show', { method: 'POST', body: JSON.stringify({ model: name }) });
+    modelCaps[name] = (await r.json()).capabilities || [];
+  } catch { modelCaps[name] = []; }
+}
+modelSel.addEventListener('change', () => { localStorage.setItem('neural.model', modelSel.value); loadCaps(); });
+modeEl.addEventListener('click', () => { if (!generating) connect(); });
+
+// HUD
+function resetStats() { Object.assign(hud, { tokens: 0, tps: 0, ttft: null, start: performance.now(), firstAt: 0, stamps: [] }); }
+function onToken(confidence) {
+  const now = performance.now();
+  if (!hud.firstAt) { hud.firstAt = now; hud.ttft = (now - hud.start) / 1000; }
+  hud.tokens++; hud.stamps.push(now);
+  neural.pulse(1, confidence);
+}
+setInterval(() => {
+  const now = performance.now();
+  if (generating) {
+    while (hud.stamps.length && now - hud.stamps[0] > 2000) hud.stamps.shift();
+    const win = Math.min(2, Math.max(0.25, (now - hud.firstAt) / 1000));
+    hud.tps = hud.firstAt ? hud.stamps.length / win : 0;
+    neural._setAuto(hud.tps ? Math.log1p(hud.tps) / Math.log1p(60) : 0);
+  } else neural._setAuto(0);
+  $('tps').textContent = hud.tps.toFixed(1);
+  $('count').textContent = hud.tokens;
+  $('ttft').textContent = hud.ttft != null ? hud.ttft.toFixed(2) + ' s'
+    : generating ? ((now - hud.start) / 1000).toFixed(0) + ' s…' : '—';
+}, 200);
+
+// Streams one reply from Ollama. Calls onPiece({thinking, content}) and onToken per token.
+async function streamOllama(messages, signal, onPiece) {
+  const model = modelSel.value, caps = modelCaps[model] || [];
+  const body = { model, messages, stream: true };
+  if (CONFIG.LOGPROBS) body.logprobs = true;
+  if (caps.includes('thinking')) body.think = true;
+
+  let r = await fetch(CONFIG.OLLAMA_URL + '/api/chat', { method: 'POST', body: JSON.stringify(body), signal });
+  if (r.status === 400 && (body.logprobs || body.think)) {      // option not supported: retry without
+    delete body.logprobs; delete body.think;
+    r = await fetch(CONFIG.OLLAMA_URL + '/api/chat', { method: 'POST', body: JSON.stringify(body), signal });
+  }
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = '', inThinkTag = false;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const chunk = JSON.parse(line);
+      if (chunk.error) throw new Error(chunk.error);
+      const m = chunk.message || {};
+      let thinking = m.thinking || '', content = m.content || '';
+      // Models that put their reasoning inside <think>…</think>
+      if (content.includes('<think>')) { inThinkTag = true; content = content.replace('<think>', ''); }
+      if (inThinkTag) {
+        const end = content.indexOf('</think>');
+        if (end >= 0) { thinking += content.slice(0, end); content = content.slice(end + 8); inThinkTag = false; }
+        else { thinking += content; content = ''; }
+      }
+      if (chunk.logprobs && chunk.logprobs.length) for (const lp of chunk.logprobs) onToken(Math.exp(lp.logprob));
+      else if (thinking || content) onToken(null);
+      if (thinking || content) onPiece({ thinking, content });
+      if (chunk.done) {
+        if (chunk.eval_count) hud.tokens = chunk.eval_count;
+        if (chunk.eval_duration) hud.tps = chunk.eval_count / (chunk.eval_duration / 1e9);
+      }
+    }
+  }
+}
+
+// Simulated reply when Ollama is not reachable
+async function streamDemo(messages, signal, onPiece) {
+  const q = messages[messages.length - 1].content;
+  const thinking = `L'utilisateur écrit « ${q.slice(0, 60)} ». Je suis en mode démo, je n'ai pas de vrai modèle : je simule une réponse.`;
+  const answer = "Ceci est une réponse simulée : Ollama n'est pas joignable. Chaque mot que tu vois arriver déclenche un influx dans la sphère, et sa couleur suit une confiance inventée (rouge = sûr, jaune = hésitant). Lance Ollama puis clique sur « MODE DÉMO » en haut pour passer aux vrais modèles.";
+  const sleep = ms => new Promise((res, rej) => {
+    const t = setTimeout(res, ms);
+    signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('aborted', 'AbortError')); }, { once: true });
+  });
+  await sleep(500);
+  for (const [field, text] of [['thinking', thinking], ['content', answer]]) {
+    for (const tok of text.match(/\s*[^\s]+/g)) {
+      await sleep(25 + Math.random() * 60);
+      onToken(Math.random() < .2 ? Math.random() * .6 : .8 + Math.random() * .2);
+      onPiece({ [field]: tok });
+    }
+  }
+}
+
+async function send(text) {
+  if (generating || !text.trim()) return;
+  if (!live) await connect(true);
+  if (!history.length && CONFIG.SYSTEM_PROMPT) history.push({ role: 'system', content: CONFIG.SYSTEM_PROMPT });
+  history.push({ role: 'user', content: text });
+  addLine('user', text);
+
+  const box = addLine('streaming', '');
+  const thinkEl = document.createElement('div'), ansEl = document.createElement('div');
+  thinkEl.className = 'think'; ansEl.className = 'ans'; box.append(thinkEl, ansEl);
+  let thinking = '', content = '';
+
+  generating = true; controller = new AbortController(); resetStats();
+  $('send').textContent = '■'; neural.think(true);
+  try {
+    await (live ? streamOllama : streamDemo)(history, controller.signal, piece => {
+      const stick = atBottom();
+      if (piece.thinking) { thinking += piece.thinking; thinkEl.textContent = thinking; }
+      if (piece.content) { content += piece.content; ansEl.textContent = content; neural.think(false); }
+      if (stick) logEl.scrollTop = logEl.scrollHeight;
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') ansEl.textContent = content + (content ? ' ' : '') + '⏹';
+    else {
+      addLine('err', 'Erreur : ' + (e.message || e));
+      if (e instanceof TypeError) setMode(false, 'Connexion à Ollama perdue. Mode démo.');
+    }
+  } finally {
+    generating = false; controller = null; neural.think(false);
+    box.classList.remove('streaming'); $('send').textContent = '↵';
+    if (content || thinking) history.push({ role: 'assistant', content });
+    else history.pop();
+  }
+}
+
+$('form').addEventListener('submit', e => {
+  e.preventDefault();
+  if (generating) { controller.abort(); return; }
+  const text = input.value; input.value = ''; send(text);
+});
+addEventListener('keydown', e => { if (e.key === 'Escape' && controller) controller.abort(); });
+
+addLine('sys', 'Neural Chat — connexion à Ollama…');
+connect().then(ok => ok && addLine('sys', `Connecté. Modèle : ${modelSel.value}. Fais glisser la sphère pour la tourner.`));
+input.focus();
+</script>
+</body>
+</html>
