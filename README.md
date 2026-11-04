@@ -2,6 +2,10 @@
 
 ![Neural Chat](icon.png)
 
+[![Démo de Neural Chat](media/demo-preview.gif)](media/neural-chat-demo.mp4)
+
+▶ **[Voir la démo complète (44 s, avec son)](media/neural-chat-demo.mp4)**
+
 Une app macOS pour discuter avec des modèles d'IA en local et **voir ce qu'ils font pendant qu'ils écrivent** : confiance sur chaque mot, attention, neurones, ressources de la machine. Tout tourne sur ton Mac, rien ne part dans le cloud.
 
 ## Deux modes
