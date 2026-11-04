@@ -3,88 +3,278 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cut">
-<title>Neural Chat — Ollama</title>
+<title>Neural Chat</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230e1238'/%3E%3Cpath d='M14 42 22 33 32 32 44 14' stroke='%23ff3b4e' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23ff3b4e'/%3E%3C/svg%3E">
 <style>
+  /* Colours come from the theme (see THEMES in the script). Values are "r, g, b". */
+  :root {
+    --bg: radial-gradient(ellipse at 50% 40%, #1d2266 0%, #0e1238 42%, #05060f 100%);
+    --fg: 230, 232, 255; --strong: 245, 246, 255; --line: 255, 255, 255; --accent: 255, 59, 78; --accent2: 255, 143, 153;
+    --panel: 5, 6, 20; --user: 154, 163, 255; --warn1: 255, 160, 60; --warn2: 255, 217, 59; --ok: 125, 255, 176;
+    --font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --side-w: 340px; --rail-w: 230px;
+  }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; }
-  body {
-    background: radial-gradient(ellipse at 50% 40%, #1d2266 0%, #0e1238 42%, #05060f 100%);
-    color: #e6e8ff;
-    font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
+  body { background: var(--bg); color: rgb(var(--fg)); font: 14px/1.5 var(--font); transition: background .4s; }
   #brain { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
   #brain.dragging { cursor: grabbing; }
 
   #hud {
-    position: fixed; top: 0; left: 0; right: 0;
-    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px;
+    position: fixed; top: 0; left: 0; right: 0; z-index: 2;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
     padding: max(10px, env(safe-area-inset-top)) 16px 10px;
-    font-size: 12px; color: rgba(230, 232, 255, .55);
-    pointer-events: none;
+    font-size: 12px; color: rgba(var(--fg), .55); pointer-events: none;
   }
   #hud > * { pointer-events: auto; }
-  #hud b { color: rgba(230, 232, 255, .9); font-weight: 500; }
-  #model {
-    background: rgba(255, 255, 255, .06); color: #e6e8ff;
-    border: 1px solid rgba(255, 255, 255, .15); border-radius: 6px;
-    font: inherit; padding: 3px 6px; max-width: 46vw;
+  #hud b { color: rgba(var(--strong), .95); font-weight: 500; }
+  #hud .grow { flex: 1; }
+  select, .btn {
+    background: rgba(var(--line), .06); color: rgb(var(--fg));
+    border: 1px solid rgba(var(--line), .15); border-radius: 6px; font: inherit; font-size: 12px; padding: 3px 7px;
   }
-  #model option { background: #0e1238; }
-  #mode { padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .2); cursor: pointer; }
-  #mode.live { color: #7dffb0; border-color: rgba(125, 255, 176, .35); }
-  #mode.demo { color: #ffd93b; border-color: rgba(255, 217, 59, .5); background: rgba(255, 217, 59, .08); }
+  select { max-width: 46vw; }
+  option, optgroup { background: rgb(var(--panel)); color: rgb(var(--fg)); }
+  .btn { cursor: pointer; }
+  .btn.on { border-color: rgba(var(--accent), .6); color: rgb(var(--accent2)); }
+  #mode { padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(var(--line), .2); cursor: pointer; }
+  #mode.live { color: rgb(var(--ok)); border-color: rgba(var(--ok), .4); }
+  #mode.demo { color: rgb(var(--warn2)); border-color: rgba(var(--warn2), .5); background: rgba(var(--warn2), .08); }
 
   #bottom {
     position: fixed; left: 0; right: 0; bottom: 0;
     display: flex; flex-direction: column; align-items: center;
-    padding: 0 12px max(12px, env(safe-area-inset-bottom));
-    pointer-events: none;
+    padding: 0 12px max(12px, env(safe-area-inset-bottom)); pointer-events: none;
   }
   #log {
-    width: 100%; max-width: 820px; height: 38vh; overflow-y: auto;
-    padding: 18vh 4px 8px; pointer-events: auto;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 45%);
-            mask-image: linear-gradient(to bottom, transparent 0, #000 45%);
+    width: 100%; max-width: 820px; height: 38vh; overflow-y: auto; padding: 18vh 4px 8px; pointer-events: auto;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 45%); mask-image: linear-gradient(to bottom, transparent 0, #000 45%);
     scrollbar-width: none;
   }
   #log::-webkit-scrollbar { display: none; }
   .msg { margin: 0 0 12px; white-space: pre-wrap; word-wrap: break-word; }
-  .user { color: #9aa3ff; }
-  .user::before { content: "› "; color: #ff3b4e; }
-  .think { color: rgba(200, 204, 230, .45); font-style: italic; margin-bottom: 4px; }
+  .user { color: rgb(var(--user)); }
+  .user::before { content: "› "; color: rgb(var(--accent)); }
+  .think { color: rgba(var(--fg), .45); font-style: italic; margin-bottom: 4px; }
   .think:empty, .ans:empty { display: none; }
-  .ans { color: #f1f2ff; }
-  .sys { color: rgba(230, 232, 255, .45); font-size: 12px; }
-  .err { color: #ff7a86; font-size: 12px; }
-  .msg.streaming .ans::after, .msg.streaming .think:not(:empty)::after {
-    content: "▍"; color: #ff3b4e; animation: blink 1s steps(2) infinite;
-  }
+  .ans { color: rgb(var(--strong)); }
+  .sys { color: rgba(var(--fg), .45); font-size: 12px; }
+  .err { color: rgb(var(--accent2)); font-size: 12px; }
+  .msg.streaming .ans::after, .msg.streaming .think:not(:empty)::after { content: "▍"; color: rgb(var(--accent)); animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
 
   #form { width: 100%; max-width: 820px; display: flex; gap: 8px; pointer-events: auto; }
   #input {
-    flex: 1; background: rgba(5, 6, 20, .55); color: #f1f2ff;
-    border: 1px solid rgba(255, 255, 255, .14); border-radius: 8px;
-    padding: 10px 12px; font: inherit; font-size: 16px; outline: none;
+    flex: 1; background: rgba(var(--panel), .55); color: rgb(var(--strong));
+    border: 1px solid rgba(var(--line), .14); border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 16px; outline: none;
     -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
   }
-  #input:focus { border-color: rgba(255, 59, 78, .55); }
-  #send {
-    background: rgba(255, 59, 78, .15); color: #ff8f99; border: 1px solid rgba(255, 59, 78, .4);
-    border-radius: 8px; padding: 0 14px; font: inherit; cursor: pointer;
+  #input:focus { border-color: rgba(var(--accent), .55); }
+  #send { background: rgba(var(--accent), .15); color: rgb(var(--accent2)); border: 1px solid rgba(var(--accent), .4); border-radius: 8px; padding: 0 14px; font: inherit; cursor: pointer; }
+  #hint { font-size: 11px; color: rgba(var(--fg), .3); margin-top: 6px; }
+
+  .tk { border-radius: 2px; }
+  .tk.u1 { border-bottom: 1px dotted rgba(var(--warn1), .8); }
+  .tk.u2 { border-bottom: 1.5px solid rgba(var(--warn2), .9); background: rgba(var(--warn2), .08); }
+  .tk:hover { background: rgba(var(--line), .14) !important; }
+  #tip {
+    position: fixed; z-index: 30; display: none; pointer-events: none; width: 270px;
+    padding: 9px 11px; border-radius: 8px; font-size: 11px; line-height: 1.45; color: rgba(var(--fg), .75);
+    background: rgba(var(--panel), .95); border: 1px solid rgba(var(--line), .14);
   }
-  #hint { font-size: 11px; color: rgba(230, 232, 255, .3); margin-top: 6px; }
+  #tip .h { color: rgb(var(--strong)); font-weight: 600; margin-bottom: 3px; white-space: pre-wrap; }
+  #tip .h2 { margin-top: 6px; color: rgba(var(--fg), .45); }
+  #tip .ctx { color: rgba(var(--fg), .5); margin: 3px 0 5px; white-space: pre-wrap; }
+  #tip .ctx b { color: rgb(var(--strong)); font-weight: 500; background: rgba(var(--line), .12); }
+
+  /* Side panel: how it works, system monitor, Lab internals */
+  #side {
+    position: fixed; top: 48px; right: 12px; bottom: 12px; width: 340px; z-index: 1;
+    display: none; flex-direction: column; gap: 16px; overflow-y: auto;
+    padding: 14px; border-radius: 10px; font-size: 11px; color: rgba(var(--fg), .65);
+    background: rgba(var(--panel), .55); border: 1px solid rgba(var(--line), .08);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); scrollbar-width: none;
+  }
+  body.side #side { display: flex; }
+  body.side #bottom { padding-right: calc(var(--side-w) + 24px); }
+  #side { width: var(--side-w); }
+  #grip { position: fixed; top: 48px; bottom: 12px; right: calc(var(--side-w) + 6px); width: 12px; z-index: 2; cursor: ew-resize; display: none; }
+  body.side #grip { display: block; }
+  #grip::after { content: ""; position: absolute; left: 4px; top: 50%; width: 4px; height: 44px; margin-top: -22px; border-radius: 2px; background: rgba(var(--line), .18); transition: background .2s; }
+  #grip:hover::after, #grip.drag::after { background: rgba(var(--accent), .8); }
+
+  /* Left rail: logo, model card, session, token stream */
+  #rail {
+    position: fixed; top: 12px; left: 12px; bottom: 12px; width: var(--rail-w); z-index: 1;
+    display: none; flex-direction: column; gap: 16px; overflow: hidden;
+    padding: 16px 14px; border-radius: 10px; font-size: 11px; color: rgba(var(--fg), .65);
+    background: rgba(var(--panel), .45); border: 1px solid rgba(var(--line), .07);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  body.rail #rail { display: flex; }
+  body.rail #bottom { padding-left: calc(var(--rail-w) + 24px); }
+  body.rail #hud { padding-left: calc(var(--rail-w) + 28px); }
+  body.rail #hud .brand { display: none; }
+  #rail h3, #side h3 { margin: 0 0 7px; font: 600 10px/1 var(--font); letter-spacing: .12em; text-transform: uppercase; color: rgba(var(--fg), .45); }
+  .brand { display: flex; align-items: center; gap: 8px; color: rgb(var(--strong)); font-weight: 600; letter-spacing: .08em; }
+  #rail .brand { gap: 12px; }
+  #rail .brand .logo { width: 54px; height: 54px; }
+  #rail .brand .name { font-size: 15px; letter-spacing: .18em; }
+  #rail .brand .tag { font-size: 10px; font-weight: 400; letter-spacing: .04em; color: rgba(var(--fg), .45); margin-top: 2px; }
+  .logo { width: 22px; height: 22px; flex: none; overflow: visible; }
+  .logo .f { fill: none; stroke: rgba(var(--line), .22); stroke-width: 1; }
+  .logo .l { fill: none; stroke: rgba(var(--line), .35); stroke-width: 1; }
+  .logo .a { fill: none; stroke: rgb(var(--accent)); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 3px rgb(var(--accent))); }
+  .logo .n circle { fill: rgb(var(--line)); opacity: .8; }
+  .logo .na circle { fill: rgb(var(--accent)); filter: drop-shadow(0 0 3px rgb(var(--accent))); }
+  body.busy .logo .na circle:nth-child(3) { animation: pulse .8s ease-in-out infinite; transform-origin: 32px 32px; }
+  @keyframes pulse { 50% { transform: scale(1.6); } }
+  .kv { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0; }
+  .kv span:last-child { color: rgb(var(--strong)); text-align: right; }
+  .big { font-size: 22px; color: rgb(var(--strong)); font-weight: 300; line-height: 1.1; }
+  #rail .tickerbox { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #ticker { flex: 1; overflow: hidden; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 3px;
+    -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent); mask-image: linear-gradient(to bottom, #000 60%, transparent); }
+  #ticker span { padding: 1px 5px; border-radius: 4px; background: rgba(var(--line), .07); color: rgb(var(--fg)); cursor: pointer; white-space: pre; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  #ticker span.u1 { background: rgba(var(--warn1), .18); color: rgb(var(--warn1)); }
+  #ticker span.u2 { background: rgba(var(--warn2), .22); color: rgb(var(--warn2)); }
+  #ticker span:hover { outline: 1px solid rgba(var(--line), .4); }
+
+  /* Neuron grid: zoom */
+  #grid { cursor: zoom-in; }
+  #gridModal { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; background: rgba(var(--panel), .82); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  #gridModal.open { display: flex; }
+  #gridModal .box { width: min-content; max-width: 96vw; max-height: 94vh; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: rgba(var(--fg), .6); }
+  #gridModal .mh { display: flex; justify-content: space-between; color: rgb(var(--strong)); }
+  #gridBig { image-rendering: pixelated; cursor: crosshair; border-radius: 6px; align-self: center; }
+  #gridModal .box > div:last-child { max-width: 100%; }
+  .note { color: rgba(var(--fg), .4); margin-top: 4px; }
+  .ex { display: none; color: rgba(var(--fg), .5); margin: 3px 0 0; line-height: 1.45; }
+  body.explain .ex { display: block; }
+  .labonly { display: none; } body.lab .labonly { display: block; }
+  body.lab .ollonly { display: none; }
+  #grid { width: 100%; image-rendering: pixelated; display: block; border-radius: 4px; }
+  #delta { width: 100%; height: 46px; display: block; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+  .row .t { width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: pre; color: rgb(var(--fg)); }
+  .row .bar { flex: 1; height: 6px; background: rgba(var(--line), .07); border-radius: 3px; overflow: hidden; }
+  .row .bar i { display: block; height: 100%; background: rgb(var(--accent)); transition: width .3s; }
+  .row .v { min-width: 64px; text-align: right; white-space: nowrap; }
+  .row.chosen .t { color: rgb(var(--accent2)); }
+
+  .st { position: relative; padding: 5px 0 5px 12px; border-left: 2px solid rgba(var(--line), .1); }
+  .st b { color: rgb(var(--fg)); font-weight: 600; }
+  .st .val { display: block; color: rgba(var(--strong), .9); }
+  .st.on { border-left-color: rgb(var(--accent)); }
+  .st.flash { animation: flash .5s ease-out; }
+  @keyframes flash { 0% { border-left-color: rgb(var(--accent)); background: rgba(var(--accent), .12); } 100% { border-left-color: rgba(var(--line), .1); background: transparent; } }
+  #spark { width: 100%; height: 40px; display: block; margin-top: 4px; }
+  #cores { display: flex; gap: 3px; height: 18px; align-items: flex-end; margin: 3px 0 2px; }
+  #cores i { flex: 1; background: rgb(var(--accent)); opacity: .75; border-radius: 1px; min-height: 1px; transition: height .4s; }
+  .legend { display: flex; align-items: center; gap: 6px; }
+  .legend i { flex: 1; height: 6px; border-radius: 3px; }
+  @media (max-width: 900px) {
+    #side { left: 12px; width: auto; top: 80px; bottom: auto; max-height: 34vh; }
+    body.side #bottom { padding-right: 12px; }
+    #grip { display: none !important; }
+    body.side #log { height: 30vh; }
+  }
 </style>
 </head>
 <body>
 <canvas id="brain"></canvas>
 
 <div id="hud">
+  <span class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+    <circle class="f" cx="32" cy="32" r="27"/><ellipse class="f" cx="32" cy="32" rx="27" ry="10"/><ellipse class="f" cx="32" cy="32" rx="11" ry="27"/>
+    <path class="l" d="M14 24 26 12 44 14 54 30 46 48 30 54 14 42 14 24M26 12 32 32 54 30M14 42 32 32 46 48M44 14 32 32"/>
+    <path class="a" d="M14 42 22 33 32 32 44 14"/>
+    <g class="n"><circle cx="14" cy="24" r="2"/><circle cx="26" cy="12" r="2"/><circle cx="54" cy="30" r="2"/><circle cx="46" cy="48" r="2"/><circle cx="30" cy="54" r="2"/></g>
+    <g class="na"><circle cx="14" cy="42" r="2.6"/><circle cx="22" cy="33" r="2.2"/><circle cx="32" cy="32" r="3.2"/><circle cx="44" cy="14" r="2.6"/></g>
+  </svg> NEURAL CHAT</span>
   <select id="model" title="Modèle"></select>
-  <span>tok/s <b id="tps">0.0</b></span>
-  <span>tokens <b id="count">0</b></span>
-  <span>1er token <b id="ttft">—</b></span>
+  <span title="Vitesse d'écriture : tokens générés par seconde">tok/s <b id="tps">0.0</b></span>
+  <span title="Nombre de tokens écrits dans la réponse">tokens <b id="count">0</b></span>
+  <span title="Temps entre l'envoi et le premier token : chargement + lecture de la question">1er token <b id="ttft">—</b></span>
   <span id="mode" title="Cliquer pour retenter la connexion">…</span>
+  <span class="grow"></span>
+  <select id="theme" title="Thème visuel"></select>
+  <button class="btn" id="explainBtn" title="Afficher les explications">? explications</button>
+  <button class="btn" id="sideBtn" title="Afficher le panneau">▤ panneau</button>
+</div>
+
+<div id="tip"></div>
+<div id="rail">
+  <div class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+    <circle class="f" cx="32" cy="32" r="27"/><ellipse class="f" cx="32" cy="32" rx="27" ry="10"/><ellipse class="f" cx="32" cy="32" rx="11" ry="27"/>
+    <path class="l" d="M14 24 26 12 44 14 54 30 46 48 30 54 14 42 14 24M26 12 32 32 54 30M14 42 32 32 46 48M44 14 32 32"/>
+    <path class="a" d="M14 42 22 33 32 32 44 14"/>
+    <g class="n"><circle cx="14" cy="24" r="2"/><circle cx="26" cy="12" r="2"/><circle cx="54" cy="30" r="2"/><circle cx="46" cy="48" r="2"/><circle cx="30" cy="54" r="2"/></g>
+    <g class="na"><circle cx="14" cy="42" r="2.6"/><circle cx="22" cy="33" r="2.2"/><circle cx="32" cy="32" r="3.2"/><circle cx="44" cy="14" r="2.6"/></g>
+  </svg><div><div class="name">NEURAL<br>CHAT</div><div class="tag">regarder un modèle penser</div></div></div>
+  <div><h3>Modèle</h3><div id="card"></div>
+    <div class="ex">La fiche du modèle choisi : sa taille, sa compression, son architecture, et où il est calculé.</div></div>
+  <div><h3>Session</h3>
+    <div class="kv"><span>vitesse</span><span><span class="big" id="bigTps">0.0</span> tok/s</span></div>
+    <div id="session"></div>
+    <div class="ex">Les chiffres de toute la conversation. « Hésitants » = mots écrits avec moins de 60 % de confiance.</div></div>
+  <div class="tickerbox"><h3>Flux de tokens</h3><div id="ticker"></div>
+    <div class="ex">Chaque bulle est un token de la réponse, le plus récent en premier. Jaune = le modèle devinait. Clique pour le retrouver dans le texte.</div></div>
+</div>
+<div id="grip" title="Glisser pour redimensionner le panneau"></div>
+<div id="gridModal"><div class="box">
+  <div class="mh"><span>Neurones · 24 couches × 4 864 · <span id="gridTok"></span></span><span>Échap ou clic pour fermer</span></div>
+  <canvas id="gridBig"></canvas>
+  <div>Survole un pixel pour voir le neurone. Valeurs relatives à chaque couche : ±100 % = les plus forts de la couche pour ce token.</div>
+</div></div>
+<div id="side">
+  <div>
+    <h3>Comment ça marche</h3>
+    <div class="ex">Un modèle de langage ne fait qu'une chose, en boucle : deviner le prochain token. Chaque mot que tu vois passe par ces étapes.</div>
+    <div class="st" id="st-tok"><b>1 · Découpage en tokens</b><span class="val">—</span>
+      <div class="ex">Le texte est découpé en tokens : des morceaux de mots (« capit » + « ale »). Toute la conversation est relue à chaque message : c'est le contexte.</div></div>
+    <div class="st" id="st-read"><b>2 · Lecture du contexte</b><span class="val">—</span>
+      <div class="ex">Avant d'écrire, le modèle lit tout le contexte d'un coup (« prefill »). C'est l'attente avant le premier mot.</div></div>
+    <div class="st" id="st-layers"><b>3 · Couches</b><span class="val">—</span>
+      <div class="ex">Chaque token traverse toutes les couches. Dans chaque couche, l'attention regarde les mots précédents, puis le MLP (des milliers de neurones) transforme l'information.</div></div>
+    <div class="st" id="st-probs"><b>4 · Probabilités</b><span class="val">—</span>
+      <div class="ex">À la sortie, le modèle donne une probabilité à chaque token de son vocabulaire. L'incertitude (entropie) mesure à quel point il hésite.</div></div>
+    <div class="st" id="st-pick"><b>5 · Tirage</b><span class="val">—</span>
+      <div class="ex">Il ne prend pas toujours le plus probable : il tire au sort parmi les meilleurs. La température règle l'audace, top-p le nombre de candidats gardés.</div></div>
+    <div class="st" id="st-out"><b>6 · Token écrit</b><span class="val">—</span>
+      <div class="ex">Le token choisi est ajouté au texte, puis tout recommence pour le suivant. Survole un mot de la réponse pour voir ses alternatives.</div></div>
+    <div class="st" id="st-mem"><b>7 · Mémoire</b><span class="val">—</span>
+      <div class="ex">Pour ne pas tout recalculer, le modèle garde le résultat de chaque token déjà lu (le cache KV). Il grossit avec la conversation.</div></div>
+    <div class="legend note" style="margin-top:8px">sûr <i id="legend"></i> devine</div>
+  </div>
+
+  <div id="sysbox">
+    <h3>Système</h3>
+    <div class="row"><span class="t">CPU</span><span class="bar"><i id="cpuBar"></i></span><span class="v" id="cpuV">—</span></div>
+    <div id="cores"></div>
+    <div class="row"><span class="t">RAM</span><span class="bar"><i id="ramBar"></i></span><span class="v" id="ramV">—</span></div>
+    <div class="row"><span class="t" id="gpuName">GPU</span><span class="bar"><i id="gpuBar"></i></span><span class="v" id="gpuV">—</span></div>
+    <canvas id="spark"></canvas>
+    <div class="note"><span style="color:rgb(var(--accent))">━</span> CPU · <span style="color:rgb(var(--user))">━</span> GPU · <span style="color:rgba(var(--fg),.6)">━</span> RAM · 60 s</div>
+    <div id="procs" style="margin-top:6px"></div>
+    <div class="note" id="sysnote"></div>
+    <div class="ex">CPU : le processeur (6 cœurs, une barre par cœur). RAM : la mémoire, où le modèle entier doit tenir. GPU : la puce graphique. Sur ton Mac, elle est trop faible pour les modèles, qui tournent donc sur le CPU.</div>
+  </div>
+
+  <div class="labonly">
+    <h3>Neurones · 24 couches × 4 864</h3><canvas id="grid" title="Cliquer pour agrandir"></canvas>
+    <div class="note">1 pixel = 1 vrai neurone du MLP. Couleur chaude : activé, froide : inhibé. Une case = une couche, de 0 (haut gauche) à 23. Clique pour agrandir, élargis le panneau pour voir plus de couches par ligne.</div>
+    <div class="ex">Ce sont les vraies valeurs calculées pour le token en cours, pas une animation. Les premières couches réagissent à la forme des mots, les dernières préparent le mot suivant.</div>
+  </div>
+  <div class="labonly"><h3>Ce que chaque couche change</h3><canvas id="delta"></canvas>
+    <div class="ex">Hauteur = combien chaque couche modifie la représentation du token. Les dernières couches travaillent le plus : elles décident du mot.</div></div>
+  <div class="labonly"><h3>Prochain token</h3><div id="top"></div>
+    <div class="ex">Les 5 tokens les plus probables avant le tirage. Le choisi est en couleur.</div></div>
+  <div class="labonly"><h3>Regarde vers</h3><div id="attn"></div>
+    <div class="ex">Les mots du contexte auxquels l'attention donne le plus de poids pour écrire ce token (moyenne des 24 couches × 14 têtes). La sphère dessine ces liens.</div></div>
+  <div class="labonly"><h3>Neurones les plus forts</h3><div id="hot"></div>
+    <div class="ex">Les neurones les plus activés (en valeur absolue), avec leur couche et leur numéro.</div></div>
+  <div class="note" id="labinfo"></div>
 </div>
 
 <div id="bottom">
@@ -93,7 +283,7 @@
     <input id="input" placeholder="Écris un message…" enterkeyhint="send">
     <button id="send" type="submit">↵</button>
   </form>
-  <div id="hint">Entrée : envoyer · Échap : stopper</div>
+  <div id="hint">Entrée : envoyer · Échap : stopper · survole un mot ou un point de la sphère</div>
 </div>
 
 <script>
@@ -105,6 +295,30 @@ const CONFIG = {
   LONG_LINKS: 70,        // liaisons longues qui traversent la sphère
   SYSTEM_PROMPT: 'Tu es un assistant concis et utile. Réponds en français sauf si on te parle dans une autre langue.',
   LOGPROBS: true,        // demande la confiance du modèle sur chaque token
+  KEEP_ALIVE: '30m',     // temps pendant lequel Ollama garde le modèle chargé (évite les rechargements)
+  DEFAULT_MODELS: ['qwen3:30b-a3b', 'qwen2.5:7b'],   // premier installé = choix par défaut
+};
+
+// Themes: colours are "r, g, b". ramp = confidence colours, from sure to guessing. neg = inhibited neurons.
+const THEMES = {
+  nuit:      { name: 'Nuit', bg: 'radial-gradient(ellipse at 50% 40%, #1d2266 0%, #0e1238 42%, #05060f 100%)',
+               fg: [230, 232, 255], strong: [245, 246, 255], line: [255, 255, 255], accent: [255, 59, 78], accent2: [255, 143, 153],
+               panel: [5, 6, 20], user: [154, 163, 255], ramp: [[255, 59, 78], [255, 138, 43], [255, 217, 59]], neg: [70, 150, 255] },
+  noir:      { name: 'Noir', bg: 'radial-gradient(ellipse at 50% 40%, #161616 0%, #070707 50%, #000 100%)',
+               fg: [215, 215, 215], strong: [250, 250, 250], line: [255, 255, 255], accent: [240, 240, 240], accent2: [255, 255, 255],
+               panel: [0, 0, 0], user: [150, 150, 150], ramp: [[240, 240, 240], [255, 150, 70], [255, 55, 55]], neg: [110, 110, 255] },
+  matrix:    { name: 'Matrix', bg: 'radial-gradient(ellipse at 50% 40%, #04301a 0%, #011208 50%, #000 100%)',
+               fg: [150, 255, 170], strong: [215, 255, 225], line: [110, 255, 150], accent: [0, 255, 110], accent2: [170, 255, 200],
+               panel: [0, 10, 4], user: [210, 255, 220], ramp: [[0, 255, 110], [200, 255, 60], [255, 235, 80]], neg: [0, 150, 255] },
+  synthwave: { name: 'Synthwave', bg: 'radial-gradient(ellipse at 50% 35%, #3d0f5c 0%, #190631 45%, #07010f 100%)',
+               fg: [255, 222, 250], strong: [255, 240, 253], line: [255, 130, 240], accent: [255, 60, 200], accent2: [255, 170, 235],
+               panel: [18, 4, 30], user: [120, 230, 255], ramp: [[255, 60, 200], [255, 140, 90], [255, 230, 90]], neg: [60, 220, 255] },
+  ambre:     { name: 'Ambre (CRT)', bg: 'radial-gradient(ellipse at 50% 40%, #2c1800 0%, #120900 50%, #040200 100%)',
+               fg: [255, 190, 95], strong: [255, 215, 150], line: [255, 175, 70], accent: [255, 140, 0], accent2: [255, 205, 130],
+               panel: [14, 7, 0], user: [255, 225, 170], ramp: [[255, 120, 0], [255, 190, 40], [255, 255, 150]], neg: [130, 170, 255] },
+  papier:    { name: 'Papier (clair)', light: true, bg: 'radial-gradient(ellipse at 50% 40%, #fffdf8 0%, #f3efe5 55%, #e2dccd 100%)',
+               fg: [45, 45, 58], strong: [12, 12, 22], line: [35, 35, 50], accent: [215, 30, 60], accent2: [175, 20, 50],
+               panel: [255, 253, 248], user: [40, 70, 200], ok: [20, 140, 70], ramp: [[215, 30, 60], [225, 115, 15], [190, 150, 0]], neg: [30, 100, 220] },
 };
 // ==========================================
 
@@ -113,8 +327,7 @@ const neural = (() => {
   const canvas = document.getElementById('brain');
   const ctx = canvas.getContext('2d');
   const N = CONFIG.NEURONS;
-  const RED = [255, 59, 78], ORANGE = [255, 138, 43], YELLOW = [255, 217, 59];
-  const LEVELS = 6; // 0 = sûr (rouge) … 5 = incertain (jaune)
+  const LEVELS = 6; // 0 = sûr … 5 = incertain
 
   // Neurons on a Fibonacci spiral with a little jitter
   const px = new Float32Array(N), py = new Float32Array(N), pz = new Float32Array(N);
@@ -151,27 +364,45 @@ const neural = (() => {
   const edgeHeat = new Float32Array(E), edgeLvl = new Uint8Array(E);
   const nodeHeat = new Float32Array(N), nodeLvl = new Uint8Array(N);
   const hotEdges = new Set(), hotNodes = new Set();
+  const overlay = new Float32Array(N), overlayLvl = new Uint8Array(N);   // persistent marks (answer map)
 
-  // Colours and halo sprites per confidence level
+  // Theme colours and halo sprites per confidence level
   const lerp = (a, b, t) => a + (b - a) * t;
   const mix = (c1, c2, t) => c1.map((v, i) => Math.round(lerp(v, c2[i], t)));
-  const levelRGB = Array.from({ length: LEVELS }, (_, l) => {
-    const t = l / (LEVELS - 1);
-    return t < .5 ? mix(RED, ORANGE, t * 2) : mix(ORANGE, YELLOW, (t - .5) * 2);
-  });
-  const levelCSS = levelRGB.map(c => `rgb(${c})`);
-  const halos = levelRGB.map(c => {
-    const s = document.createElement('canvas'); s.width = s.height = 64;
-    const g = s.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grad.addColorStop(0, `rgba(${c},1)`); grad.addColorStop(.25, `rgba(${c},.55)`); grad.addColorStop(1, `rgba(${c},0)`);
-    g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
-    return s;
-  });
+  let levelCSS = [], halos = [], lineCSS = '#fff', textCSS = '#fff', glow = 'lighter', light = false;
+  function setTheme(t) {
+    const [a, b, c] = t.ramp;
+    const rgb = Array.from({ length: LEVELS }, (_, l) => { const k = l / (LEVELS - 1); return k < .5 ? mix(a, b, k * 2) : mix(b, c, (k - .5) * 2); });
+    levelCSS = rgb.map(c => `rgb(${c})`);
+    halos = rgb.map(c => {
+      const s = document.createElement('canvas'); s.width = s.height = 64;
+      const g = s.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grad.addColorStop(0, `rgba(${c},1)`); grad.addColorStop(.25, `rgba(${c},.55)`); grad.addColorStop(1, `rgba(${c},0)`);
+      g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+      return s;
+    });
+    lineCSS = `rgb(${t.line})`; textCSS = `rgb(${t.strong})`; light = !!t.light;
+    glow = light ? 'source-over' : 'lighter';   // additive light disappears on a light background
+  }
   const confidenceLevel = c => c == null ? 0
     : Math.round((1 - Math.min(1, Math.max(0, (c - .25) / .7))) * (LEVELS - 1));
 
+  // Attention graph (Lab): one point per token of the context, links = real attention weights
+  const G = { on: false, cap: 0, n: 0, x: null, y: null, z: null, sx: null, sy: null, sz: null,
+              text: [], special: [], gen: [], conf: [], attn: [], links: [], focus: -1, newest: -1 };
+  function graphCapacity(n) {
+    if (n <= G.cap) return;
+    let cap = Math.max(48, G.cap || 48); while (cap < n) cap = Math.ceil(cap * 1.5);
+    G.cap = cap;
+    for (const k of ['x', 'y', 'z', 'sx', 'sy', 'sz']) G[k] = new Float32Array(cap);
+    for (let i = 0; i < cap; i++) {     // reading order from the top of the sphere to the bottom
+      const y = 1 - (i + 0.5) / cap * 2, r = Math.sqrt(1 - y * y), a = i * golden;
+      G.x[i] = Math.cos(a) * r; G.y[i] = y; G.z[i] = Math.sin(a) * r;
+    }
+  }
+
   // State
-  let W = 0, H = 0, dpr = 1, cx = 0, cy = 0, R = 0;
+  let W = 0, H = 0, dpr = 1, cx = 0, cy = 0, R = 0, insetRight = 0, insetLeft = 0;
   let yaw = 0, pitch = 0.35, velYaw = 0, velPitch = 0, dragging = false, lastPX = 0, lastPY = 0, lastPT = 0;
   let activity = 0, manualActivity = 0, autoActivity = 0, thinking = false;
   let ambientClock = 0, time = 0, last = performance.now();
@@ -184,31 +415,54 @@ const neural = (() => {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = innerWidth; H = innerHeight;
     canvas.width = W * dpr; canvas.height = H * dpr;
-    const mobile = W < 700;
-    cx = W / 2; cy = H * (mobile ? 0.3 : 0.42);
-    R = mobile ? Math.min(W * 0.4, H * 0.2) : Math.min(W, H) * 0.32;
+    const mobile = W < 700, room = W - insetLeft - insetRight;
+    cx = insetLeft + room / 2; cy = H * (mobile ? 0.3 : 0.42);
+    R = mobile ? Math.min(W * 0.4, H * 0.2) : Math.min(room, H) * 0.32;
   }
   addEventListener('resize', resize); resize();
 
-  // Rotation with mouse / finger and inertia
+  // Rotation with mouse / finger and inertia; hover and click on points
+  let downX = 0, downY = 0, hovered = -1, pinned = -1;
+  const handlers = { hover: null, click: null };
+  function nodeAt(x, y) {
+    const g = G.on && G.n, n = g ? G.n : N, X = g ? G.sx : sx, Y = g ? G.sy : sy, Z = g ? G.sz : sz;
+    let best = -1, bestD = 196;      // 14 px
+    for (let i = 0; i < n; i++) {
+      if (Z[i] < 0.42) continue;     // only the visible half
+      const d = (X[i] - x) ** 2 + (Y[i] - y) ** 2 - Z[i] * 40;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
   canvas.addEventListener('pointerdown', e => {
+    downX = e.clientX; downY = e.clientY;
     dragging = true; lastPX = e.clientX; lastPY = e.clientY; lastPT = performance.now();
     velYaw = velPitch = 0; canvas.setPointerCapture(e.pointerId); canvas.classList.add('dragging');
   });
   canvas.addEventListener('pointermove', e => {
-    if (!dragging) return;
+    if (!dragging) {
+      const i = handlers.hover ? nodeAt(e.clientX, e.clientY) : -1;
+      canvas.style.cursor = i >= 0 ? 'pointer' : '';
+      if (i !== hovered) { hovered = i; handlers.hover && handlers.hover(i, e.clientX, e.clientY); }
+      return;
+    }
     const now = performance.now(), dt = Math.max(1, now - lastPT) / 1000;
     const dx = (e.clientX - lastPX) / R, dy = (e.clientY - lastPY) / R;
     yaw += dx; pitch += dy;
     velYaw = lerp(velYaw, dx / dt, .5); velPitch = lerp(velPitch, dy / dt, .5);
     lastPX = e.clientX; lastPY = e.clientY; lastPT = now;
   });
-  const endDrag = () => { dragging = false; canvas.classList.remove('dragging'); };
+  const endDrag = e => {
+    dragging = false; canvas.classList.remove('dragging');
+    if (e && e.type === 'pointerup' && Math.hypot(e.clientX - downX, e.clientY - downY) < 5 && handlers.click)
+      handlers.click(nodeAt(e.clientX, e.clientY), e.clientX, e.clientY);
+  };
+  canvas.addEventListener('pointerleave', () => { if (hovered >= 0) { hovered = -1; handlers.hover && handlers.hover(-1); } });
   canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
 
   // An influx: a random walk through the graph that lights the links it crosses
   function spawn(level = 0) {
-    if (influxes.length > 70) return;
+    if (influxes.length > 70 || (G.on && G.n)) return;
     const len = 4 + Math.random() * 7 | 0, path = [Math.random() * N | 0], edges = [], seen = new Set(path);
     while (path.length <= len) {
       const n = path[path.length - 1], a = adj[n], opts = [];
@@ -223,6 +477,72 @@ const neural = (() => {
   }
   function heatNode(n, level) { nodeHeat[n] = 1; nodeLvl[n] = level; hotNodes.add(n); }
 
+  function drawRing(x, y) {
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.9; ctx.strokeStyle = textCSS; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, 6.2832); ctx.stroke();
+  }
+  function label(text, x, y, alpha) {
+    const t = text.trim(); if (!t) return;
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = alpha;
+    ctx.font = '11px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillStyle = textCSS; ctx.fillText(t.length > 14 ? t.slice(0, 13) + '…' : t, x + 7, y - 6);
+  }
+
+  function drawGraph(dt, scale, cyw, syw, cp, sp) {
+    const n = G.n, D = 3.2;
+    for (let i = 0; i < n; i++) {
+      const x1 = G.x[i] * cyw + G.z[i] * syw, z1 = -G.x[i] * syw + G.z[i] * cyw;
+      const y2 = G.y[i] * cp - z1 * sp, z2 = G.y[i] * sp + z1 * cp, p = D / (D - z2);
+      G.sx[i] = cx + x1 * p * scale; G.sy[i] = cy + y2 * p * scale; G.sz[i] = (z2 + 1) / 2;
+    }
+    // Reading order: a faint thread from each token to the next
+    ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = lineCSS; ctx.lineWidth = 0.6;
+    for (let b = 0; b < 4; b++) {
+      ctx.globalAlpha = (light ? 0.08 : 0.05) + b * 0.06; ctx.beginPath();
+      for (let i = 1; i < n; i++) {
+        if (Math.min(3, ((G.sz[i] + G.sz[i - 1]) / 2) * 4 | 0) !== b) continue;
+        ctx.moveTo(G.sx[i - 1], G.sy[i - 1]); ctx.lineTo(G.sx[i], G.sy[i]);
+      }
+      ctx.stroke();
+    }
+    // Tokens: prompt in the line colour, the model's answer in the confidence colour
+    for (let i = 0; i < n; i++) {
+      const d = G.sz[i], r = (G.special[i] ? 0.6 : 1 + d * 1.6) * (G.gen[i] ? 1.3 : 1);
+      ctx.globalAlpha = (G.special[i] ? 0.25 : 0.15 + d * 0.8);
+      ctx.fillStyle = G.gen[i] ? levelCSS[confidenceLevel(G.conf[i])] : lineCSS;
+      ctx.beginPath(); ctx.arc(G.sx[i], G.sy[i], r, 0, 6.2832); ctx.fill();
+    }
+    // Attention links (fade), or the attention of the focused token (held)
+    ctx.globalCompositeOperation = glow; ctx.lineCap = 'round';
+    const fade = Math.exp(-dt * 0.8), drawn = [];
+    const focusLinks = G.focus >= 0 && G.attn[G.focus] ? G.attn[G.focus].map(([b, w]) => ({ a: G.focus, b, w, heat: 1, lvl: confidenceLevel(G.conf[G.focus]) })) : [];
+    for (const L of G.focus >= 0 ? focusLinks : G.links) {
+      if (L.b >= n || L.a >= n) continue;
+      const depth = 0.3 + 0.7 * (G.sz[L.a] + G.sz[L.b]) / 2, k = Math.min(1, 0.25 + L.w * 5);
+      ctx.strokeStyle = levelCSS[L.lvl];
+      ctx.beginPath(); ctx.moveTo(G.sx[L.a], G.sy[L.a]); ctx.lineTo(G.sx[L.b], G.sy[L.b]);
+      ctx.globalAlpha = L.heat * k * 0.25 * depth; ctx.lineWidth = 3 + L.w * 14; ctx.stroke();
+      ctx.globalAlpha = L.heat * k * depth; ctx.lineWidth = 0.6 + L.w * 5; ctx.stroke();
+      const s = 8 + L.w * 50; ctx.globalAlpha = L.heat * k * depth;
+      ctx.drawImage(halos[L.lvl], G.sx[L.b] - s / 2, G.sy[L.b] - s / 2, s, s);
+      if (L.w > 0.06) drawn.push(L);
+    }
+    for (let i = G.links.length - 1; i >= 0; i--) {
+      const L = G.links[i]; L.heat *= fade;
+      if (L.a === G.newest) L.heat = Math.max(L.heat, 0.35);   // the last token keeps its links visible
+      else if (L.heat < 0.03) G.links.splice(i, 1);
+    }
+    // Labels: the token being written and the words it looks at most
+    const lead = G.focus >= 0 ? G.focus : G.newest;
+    for (const L of drawn.sort((a, b) => b.w - a.w).slice(0, 4)) label(G.text[L.b], G.sx[L.b], G.sy[L.b], Math.min(1, L.heat) * 0.9);
+    if (lead >= 0 && lead < n) {
+      const s = 22; ctx.globalCompositeOperation = glow; ctx.globalAlpha = 0.9;
+      ctx.drawImage(halos[confidenceLevel(G.conf[lead])], G.sx[lead] - s / 2, G.sy[lead] - s / 2, s, s);
+      label(G.text[lead], G.sx[lead], G.sy[lead], 1);
+    }
+    if (hovered >= 0 && hovered < n) { drawRing(G.sx[hovered], G.sy[hovered]); if (hovered !== lead) label(G.text[hovered], G.sx[hovered], G.sy[hovered], 1); }
+  }
+
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now; time += dt;
 
@@ -232,11 +552,18 @@ const neural = (() => {
 
     // Rotation: slow auto spin + inertia
     if (!dragging) {
-      yaw += (0.06 + activity * 0.55) * dt + velYaw * dt;
+      yaw += (0.06 + activity * (G.on ? 0.15 : 0.55)) * dt + velYaw * dt;
       pitch += velPitch * dt;
       const damp = Math.exp(-dt * 2.2); velYaw *= damp; velPitch *= damp;
     }
     pitch = Math.max(-1.3, Math.min(1.3, pitch));
+
+    const breath = 1 + Math.sin(time * (thinking ? 2.4 : 1.1)) * (0.022 + activity * 0.015);
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const D = 3.2, scale = R * breath;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (G.on && G.n) { drawGraph(dt, scale, cyw, syw, cp, sp); ctx.globalAlpha = 1; requestAnimationFrame(frame); return; }
 
     // Background influxes, more frequent when busy
     ambientClock += dt * (0.4 + activity * 7 + (thinking ? 2 : 0));
@@ -257,9 +584,6 @@ const neural = (() => {
     }
 
     // Project
-    const breath = 1 + Math.sin(time * (thinking ? 2.4 : 1.1)) * (0.022 + activity * 0.015);
-    const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
-    const D = 3.2, scale = R * breath;
     bucketNodeCount.fill(0);
     for (let i = 0; i < N; i++) {
       const x1 = px[i] * cyw + pz[i] * syw, z1 = -px[i] * syw + pz[i] * cyw;
@@ -269,18 +593,15 @@ const neural = (() => {
       const b = Math.min(BUCKETS - 1, sz[i] * BUCKETS | 0);
       bucketNodes[b][bucketNodeCount[b]++] = i;
     }
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H);
     ctx.globalCompositeOperation = 'source-over';
 
-    // White links, grouped by depth so we stroke only 10 paths
+    // Links, grouped by depth so we stroke only 10 paths
     bucketCount.fill(0);
     for (let e = 0; e < E; e++) {
       const b = Math.min(BUCKETS - 1, (sz[ea[e]] + sz[eb[e]]) * 0.5 * BUCKETS | 0);
       bucketEdges[b][bucketCount[b]++] = e;
     }
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.6;
+    ctx.strokeStyle = lineCSS; ctx.lineWidth = 0.6;
     for (let b = 0; b < BUCKETS; b++) {
       if (!bucketCount[b]) continue;
       ctx.globalAlpha = 0.03 + Math.pow((b + .5) / BUCKETS, 1.6) * 0.32;
@@ -290,8 +611,8 @@ const neural = (() => {
       ctx.stroke();
     }
 
-    // White neurons
-    ctx.fillStyle = '#fff';
+    // Neurons
+    ctx.fillStyle = lineCSS;
     for (let b = 0; b < BUCKETS; b++) {
       if (!bucketNodeCount[b]) continue;
       const d = (b + .5) / BUCKETS;
@@ -303,8 +624,8 @@ const neural = (() => {
       ctx.fill();
     }
 
-    // Lit links (glow = wide faint stroke + thin bright stroke, additive)
-    ctx.globalCompositeOperation = 'lighter';
+    // Lit links (glow = wide faint stroke + thin bright stroke)
+    ctx.globalCompositeOperation = glow;
     ctx.lineCap = 'round';
     const fade = Math.exp(-dt * 2.6);
     for (const e of hotEdges) {
@@ -326,7 +647,7 @@ const neural = (() => {
       ctx.globalAlpha = depth; ctx.lineWidth = 1.5; ctx.stroke();
       ctx.globalAlpha = depth; const s = 14; ctx.drawImage(halos[f.level], hx - s / 2, hy - s / 2, s, s);
     }
-    // Red halos on crossed neurons
+    // Halos on crossed neurons
     const nfade = Math.exp(-dt * 2.0);
     for (const n of hotNodes) {
       const h = nodeHeat[n], s = (10 + h * 18) * (0.6 + sz[n] * 0.6);
@@ -335,20 +656,57 @@ const neural = (() => {
       nodeHeat[n] = h * nfade;
       if (nodeHeat[n] < 0.02) { nodeHeat[n] = 0; hotNodes.delete(n); }
     }
+    // Persistent marks (answer map) + hovered / pinned point
+    for (let n = 0; n < N; n++) {
+      const v = overlay[n]; if (v < 0.05) continue;
+      const s = (8 + v * 22) * (0.6 + sz[n] * 0.6);
+      ctx.globalAlpha = Math.min(1, v * 1.2) * (0.3 + 0.7 * sz[n]);
+      ctx.drawImage(halos[overlayLvl[n]], sx[n] - s / 2, sy[n] - s / 2, s, s);
+    }
+    for (const n of [hovered, pinned]) if (n >= 0) drawRing(sx[n], sy[n]);
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
     requestAnimationFrame(frame);
   }
+  setTheme(THEMES.nuit);
   requestAnimationFrame(frame);
 
   return {
-    /** Fire n influxes. confidence (0..1, optional) sets the colour: red = sure, yellow = unsure. */
+    /** Fire n influxes. confidence (0..1, optional) sets the colour: sure → guessing. */
     pulse(n = 1, confidence) { const l = confidenceLevel(confidence); for (let i = 0; i < n; i++) spawn(l); },
     /** Thinking mode: faster breathing, steady background activity. */
     think(on = true) { thinking = !!on; },
     /** Manual activity level 0..1 (rotation speed and influx frequency). */
     setActivity(v) { manualActivity = Math.max(0, Math.min(1, +v || 0)); },
     _setAuto(v) { autoActivity = Math.max(0, Math.min(1, v)); },
-    get stats() { return { neurons: N, links: E, influxes: influxes.length, activity }; },
+    _setInset(left, right) { insetLeft = left; insetRight = right; resize(); },
+    _theme: setTheme,
+    /** Persistent marks: values 0..1 and confidences per neuron (null clears). */
+    _overlay(values, confidences) {
+      overlay.fill(0);
+      if (values) for (let i = 0; i < N; i++) { overlay[i] = values[i] || 0; overlayLvl[i] = confidenceLevel(confidences ? confidences[i] : null); }
+    },
+    _pin(i) { pinned = i; },
+    _point(i) { return G.on && G.n ? { x: G.sx[i], y: G.sy[i], z: G.sz[i] } : { x: sx[i], y: sy[i], z: sz[i] }; },
+    _on(name, fn) { handlers[name] = fn; },
+    // Attention graph
+    _graph(on) { G.on = !!on; hovered = pinned = -1; },
+    get graphOn() { return G.on && G.n > 0; },
+    _graphContext(tokens) {
+      G.cap = 0; graphCapacity(Math.ceil(tokens.length * 1.4) + 16);
+      G.n = tokens.length; G.text = tokens.map(t => t[0]); G.special = tokens.map(t => t[1]);
+      G.gen = tokens.map(() => false); G.conf = tokens.map(() => null); G.attn = tokens.map(() => null);
+      G.links = []; G.focus = -1; G.newest = -1;
+    },
+    _graphAdd(text, links, conf) {
+      graphCapacity(G.n + 1);
+      const i = G.n++;
+      G.text[i] = text; G.special[i] = false; G.gen[i] = true; G.conf[i] = conf; G.attn[i] = links; G.newest = i;
+      const lvl = confidenceLevel(conf);
+      for (const [b, w] of links) G.links.push({ a: i, b, w, heat: 1, lvl });
+    },
+    _graphFocus(i) { G.focus = i; },
+    _graphToken(i) { return { text: G.text[i], gen: G.gen[i], conf: G.conf[i], attn: G.attn[i], special: G.special[i], n: G.n }; },
+    get stats() { return { neurons: N, links: E, influxes: influxes.length, activity, graph: G.n }; },
   };
 })();
 window.neural = { pulse: neural.pulse, think: neural.think, setActivity: neural.setActivity };
@@ -357,8 +715,9 @@ window.neural = { pulse: neural.pulse, think: neural.think, setActivity: neural.
 const $ = id => document.getElementById(id);
 const logEl = $('log'), input = $('input'), modelSel = $('model'), modeEl = $('mode');
 const history = [];
-let live = false, controller = null, generating = false, modelCaps = {};
+let live = false, controller = null, generating = false, modelShow = {}, sysAvailable = false;
 const hud = { tokens: 0, tps: 0, ttft: null, start: 0, firstAt: 0, stamps: [] };
+let theme = THEMES.nuit;
 
 function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40; }
 function addLine(cls, text) {
@@ -367,57 +726,143 @@ function addLine(cls, text) {
   if (stick) logEl.scrollTop = logEl.scrollHeight;
   return d;
 }
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const show = t => JSON.stringify(t).slice(1, -1);
+const fmtGB = b => (b / 2 ** 30).toFixed(1) + ' Go';
 
-function setMode(isLive, reason) {
-  live = isLive;
-  modeEl.className = isLive ? 'live' : 'demo';
-  modeEl.textContent = isLive ? '● Ollama' : '◌ MODE DÉMO';
-  if (!isLive && reason) addLine('err', reason);
+// ---------- Themes, panel, explanations ----------
+for (const [id, t] of Object.entries(THEMES)) $('theme').add(new Option(t.name, id));
+function applyTheme(id) {
+  theme = THEMES[id] || THEMES.nuit;
+  const root = document.documentElement.style;
+  root.setProperty('--bg', theme.bg);
+  for (const k of ['fg', 'strong', 'line', 'accent', 'accent2', 'panel', 'user']) root.setProperty('--' + k, theme[k].join(', '));
+  root.setProperty('--ok', (theme.ok || [125, 255, 176]).join(', '));
+  root.setProperty('--warn1', theme.ramp[1].join(', ')); root.setProperty('--warn2', theme.ramp[2].join(', '));
+  $('theme').value = id; localStorage.setItem('neural.theme', id);
+  $('legend').style.background = `linear-gradient(90deg, ${theme.ramp.map(c => `rgb(${c})`).join(', ')})`;
+  neural._theme(theme);
+  buildLut();
+  if (lastEv) labRender(lastEv);
+}
+$('theme').addEventListener('change', () => applyTheme($('theme').value));
+
+let sideW = +localStorage.getItem('neural.sideW') || 340;
+const RAIL_W = 230;
+function layout() {
+  const wide = innerWidth > 900, sideOn = document.body.classList.contains('side');
+  sideW = Math.max(260, Math.min(sideW, innerWidth - 420));
+  document.documentElement.style.setProperty('--side-w', sideW + 'px');
+  const right = sideOn && wide ? sideW + 24 : 0;
+  const railOn = wide && innerWidth - right - RAIL_W - 24 >= 640;
+  document.body.classList.toggle('rail', railOn);
+  neural._setInset(railOn ? RAIL_W + 24 : 0, right);
+  layoutGrid();
+}
+addEventListener('resize', layout);
+function setSide(on) {
+  document.body.classList.toggle('side', on); $('sideBtn').classList.toggle('on', on);
+  localStorage.setItem('neural.side', on ? '1' : '0'); layout();
+}
+// Drag the left edge of the panel to resize it
+(() => {
+  const grip = $('grip');
+  grip.addEventListener('pointerdown', e => { grip.setPointerCapture(e.pointerId); grip.classList.add('drag'); });
+  grip.addEventListener('pointermove', e => {
+    if (!grip.classList.contains('drag')) return;
+    sideW = innerWidth - e.clientX - 12; layout();
+  });
+  const end = () => { if (!grip.classList.contains('drag')) return; grip.classList.remove('drag'); localStorage.setItem('neural.sideW', sideW); };
+  grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
+})();
+function setExplain(on) {
+  document.body.classList.toggle('explain', on); $('explainBtn').classList.toggle('on', on);
+  localStorage.setItem('neural.explain', on ? '1' : '0');
+  if (on && !document.body.classList.contains('side')) setSide(true);
+}
+$('sideBtn').addEventListener('click', () => setSide(!document.body.classList.contains('side')));
+$('explainBtn').addEventListener('click', () => setExplain(!document.body.classList.contains('explain')));
+
+// ---------- Connection ----------
+const LAB = 'lab';
+let labInfo = null;
+const isLab = () => modelSel.value === LAB;
+
+function updateMode() {
+  const lab = live && isLab();
+  document.body.classList.toggle('lab', lab);
+  neural._graph(lab);
+  modeEl.className = live ? 'live' : 'demo';
+  modeEl.textContent = !live ? '◌ MODE DÉMO' : lab ? '● Labo' : '● Ollama';
+  pipeModel();
+}
+
+function group(label, options) {
+  const g = document.createElement('optgroup'); g.label = label;
+  for (const [text, value] of options) g.appendChild(new Option(text, value));
+  modelSel.appendChild(g);
 }
 
 async function connect(quiet = false) {
+  let models = [], error = null;
   try {
     const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 2500);
     const r = await fetch(CONFIG.OLLAMA_URL + '/api/tags', { signal: ctl.signal });
     clearTimeout(timer);
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    const models = (await r.json()).models || [];
+    models = (await r.json()).models || [];
     if (!models.length) throw new Error('aucun modèle installé (ollama pull …)');
-    const saved = localStorage.getItem('neural.model');
-    modelSel.innerHTML = '';
-    for (const m of models) modelSel.add(new Option(m.name, m.name));
-    if (saved && models.some(m => m.name === saved)) modelSel.value = saved;
-    setMode(true);
-    loadCaps();
-    return true;
-  } catch (e) {
-    modelSel.innerHTML = ''; modelSel.add(new Option('démo', 'démo'));
+  } catch (e) { error = e; }
+  // The Lab only exists when the page is served by app.py
+  if (!labInfo || !labInfo.loaded) labInfo = await fetch('lab/status').then(r => r.ok ? r.json() : null).catch(() => null);
+  if (labInfo && !labInfo.available) labInfo = null;
+
+  modelSel.innerHTML = '';
+  if (models.length) group('Ollama', models.map(m => [m.name, m.name]));
+  if (labInfo) group('Labo · activations réelles', [['Qwen2.5-0.5B (local)', LAB]]);
+  live = models.length > 0 || !!labInfo;
+  const reason = `Ollama injoignable sur ${CONFIG.OLLAMA_URL} (${error && (error.message || error)}).`;
+  if (!live) {
+    modelSel.add(new Option('démo', 'démo'));
     const fileHint = location.protocol === 'file:'
       ? "\nPage ouverte en file:// : Ollama refuse cette origine par défaut. Lance une fois dans le Terminal :\n  launchctl setenv OLLAMA_ORIGINS \"null\"\npuis quitte et relance l'app Ollama."
       : '';
-    setMode(false, quiet ? '' : `Ollama injoignable sur ${CONFIG.OLLAMA_URL} (${e.message || e}). Réponses simulées.${fileHint}\nClique sur « MODE DÉMO » pour réessayer.`);
-    return false;
-  }
+    if (!quiet) addLine('err', `${reason} Réponses simulées.${fileHint}\nClique sur « MODE DÉMO » pour réessayer.`);
+  } else if (error && !quiet) addLine('err', `${reason} Seul le mode Labo est disponible.`);
+  const saved = localStorage.getItem('neural.model');
+  const has = v => [...modelSel.options].some(o => o.value === v);
+  const preferred = [saved, ...CONFIG.DEFAULT_MODELS].find(v => v && has(v));
+  if (preferred) modelSel.value = preferred;
+  updateMode();
+  loadShow();
+  return live;
 }
 
-async function loadCaps() {
+// Model card from Ollama: capabilities, architecture, quantization, sampling parameters
+async function loadShow() {
   const name = modelSel.value;
-  if (!live || modelCaps[name]) return;
+  if (!live || isLab() || modelShow[name]) return pipeModel();
   try {
     const r = await fetch(CONFIG.OLLAMA_URL + '/api/show', { method: 'POST', body: JSON.stringify({ model: name }) });
-    modelCaps[name] = (await r.json()).capabilities || [];
-  } catch { modelCaps[name] = []; }
+    modelShow[name] = await r.json();
+  } catch { modelShow[name] = {}; }
+  pipeModel();
 }
-modelSel.addEventListener('change', () => { localStorage.setItem('neural.model', modelSel.value); loadCaps(); });
+modelSel.addEventListener('change', () => {
+  localStorage.setItem('neural.model', modelSel.value); updateMode(); loadShow();
+  pinnedNode = -1; neural._pin(-1); refreshMap();
+});
 modeEl.addEventListener('click', () => { if (!generating) connect(); });
 
-// HUD
+// ---------- HUD ----------
 function resetStats() { Object.assign(hud, { tokens: 0, tps: 0, ttft: null, start: performance.now(), firstAt: 0, stamps: [] }); }
 function onToken(confidence) {
   const now = performance.now();
-  if (!hud.firstAt) { hud.firstAt = now; hud.ttft = (now - hud.start) / 1000; }
+  if (!hud.firstAt) { hud.firstAt = now; hud.ttft = (now - hud.start) / 1000; $('st-read').classList.remove('on'); }
   hud.tokens++; hud.stamps.push(now);
+  sess.tokens++; if (confidence != null) { sess.confSum += confidence; sess.confN++; if (confidence < 0.6) sess.unsure++; }
   neural.pulse(1, confidence);
+  flashPipeline();
 }
 setInterval(() => {
   const now = performance.now();
@@ -427,28 +872,64 @@ setInterval(() => {
     hud.tps = hud.firstAt ? hud.stamps.length / win : 0;
     neural._setAuto(hud.tps ? Math.log1p(hud.tps) / Math.log1p(60) : 0);
   } else neural._setAuto(0);
-  $('tps').textContent = hud.tps.toFixed(1);
+  $('tps').textContent = hud.tps.toFixed(1); $('bigTps').textContent = hud.tps.toFixed(1);
+  if (generating) refreshSession();
   $('count').textContent = hud.tokens;
   $('ttft').textContent = hud.ttft != null ? hud.ttft.toFixed(2) + ' s'
     : generating ? ((now - hud.start) / 1000).toFixed(0) + ' s…' : '—';
 }, 200);
 
-// Streams one reply from Ollama. Calls onPiece({thinking, content}) and onToken per token.
-async function streamOllama(messages, signal, onPiece) {
-  const model = modelSel.value, caps = modelCaps[model] || [];
-  const body = { model, messages, stream: true };
-  if (CONFIG.LOGPROBS) body.logprobs = true;
-  if (caps.includes('thinking')) body.think = true;
-
-  let r = await fetch(CONFIG.OLLAMA_URL + '/api/chat', { method: 'POST', body: JSON.stringify(body), signal });
-  if (r.status === 400 && (body.logprobs || body.think)) {      // option not supported: retry without
-    delete body.logprobs; delete body.think;
-    r = await fetch(CONFIG.OLLAMA_URL + '/api/chat', { method: 'POST', body: JSON.stringify(body), signal });
+// ---------- "How it works" pipeline ----------
+const pipe = (id, text) => { $(id).querySelector('.val').textContent = text; };
+let flashTimer = 0;
+function flashPipeline() {
+  const now = performance.now(); if (now - flashTimer < 250) return; flashTimer = now;
+  ['st-layers', 'st-probs', 'st-pick', 'st-out'].forEach((id, k) => setTimeout(() => {
+    const s = $(id); s.classList.remove('flash'); void s.offsetWidth; s.classList.add('flash');
+  }, k * 70));
+}
+const fmtInt = n => Number(n).toLocaleString('fr-FR');
+function modelInfo(show) {
+  const info = (show && show.model_info) || {}, get = suffix => { const k = Object.keys(info).find(k => k.endsWith(suffix)); return k ? info[k] : null; };
+  return { layers: get('.block_count'), heads: get('.attention.head_count'), ffn: get('.feed_forward_length'), ctx: get('.context_length'),
+           experts: get('.expert_count'), used: get('.expert_used_count'), dim: get('.embedding_length') };
+}
+function sampling(show) {
+  const out = {};
+  for (const line of ((show && show.parameters) || '').split('\n')) {
+    const m = line.trim().match(/^(temperature|top_p|top_k|repeat_penalty)\s+(\S+)/); if (m) out[m[1]] = m[2];
   }
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+  return out;
+}
+function pipeModel() {
+  refreshCard();
+  if (!live) { for (const id of ['st-tok', 'st-read', 'st-layers', 'st-probs', 'st-pick', 'st-out', 'st-mem']) pipe(id, '—'); return; }
+  if (isLab()) {
+    const L = labInfo || {};
+    pipe('st-layers', `${L.layers || 24} couches · ${L.heads || 14} têtes d'attention · ${fmtInt(L.width || 4864)} neurones MLP par couche` + (L.params ? ` · ${(L.params / 1e6).toFixed(0)} M paramètres` : ''));
+    pipe('st-probs', `${fmtInt(L.vocab || 151936)} tokens possibles`);
+    pipe('st-pick', `température ${L.temperature ?? 0.7} · top-p ${L.top_p ?? 0.9}`);
+    return;
+  }
+  const s = modelShow[modelSel.value]; if (!s) return;
+  const m = modelInfo(s), d = s.details || {}, p = sampling(s);
+  pipe('st-layers', [m.layers && `${m.layers} couches`, m.heads && `${m.heads} têtes`, m.ffn && `${fmtInt(m.ffn)} neurones MLP`,
+    m.experts && `${m.experts} experts dont ${m.used} actifs par token`, d.parameter_size && `${d.parameter_size} paramètres`,
+    d.quantization_level && `compressé en ${d.quantization_level}`].filter(Boolean).join(' · '));
+  pipe('st-pick', Object.keys(p).length ? Object.entries(p).map(([k, v]) => `${k.replace('_', '-')} ${v}`).join(' · ') : "réglages par défaut d'Ollama");
+  pipe('st-probs', m.experts ? `un « routeur » choisit ${m.used} experts sur ${m.experts} à chaque token` : 'un score par token du vocabulaire');
+}
+function pipeOllamaDone(c) {
+  const s = modelShow[modelSel.value], m = modelInfo(s);
+  if (c.prompt_eval_count) pipe('st-tok', `${fmtInt(c.prompt_eval_count + (c.eval_count || 0))} tokens dans le contexte` + (sysCtx ? ` (limite ${fmtInt(sysCtx)})` : m.ctx ? ` (max ${fmtInt(m.ctx)})` : ''));
+  if (c.prompt_eval_duration) pipe('st-read', `${fmtInt(c.prompt_eval_count)} tokens lus en ${(c.prompt_eval_duration / 1e9).toFixed(1)} s (${(c.prompt_eval_count / (c.prompt_eval_duration / 1e9)).toFixed(1)} tok/s)`
+    + (c.load_duration > 5e8 ? ` · chargement ${(c.load_duration / 1e9).toFixed(1)} s` : ''));
+}
 
-  const reader = r.body.getReader(), dec = new TextDecoder();
-  let buf = '', inThinkTag = false;
+// ---------- Streaming ----------
+async function readLines(response, onLine) {
+  const reader = response.body.getReader(), dec = new TextDecoder();
+  let buf = '';
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -456,48 +937,401 @@ async function streamOllama(messages, signal, onPiece) {
     let nl;
     while ((nl = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-      if (!line) continue;
-      const chunk = JSON.parse(line);
-      if (chunk.error) throw new Error(chunk.error);
-      const m = chunk.message || {};
-      let thinking = m.thinking || '', content = m.content || '';
-      // Models that put their reasoning inside <think>…</think>
-      if (content.includes('<think>')) { inThinkTag = true; content = content.replace('<think>', ''); }
-      if (inThinkTag) {
-        const end = content.indexOf('</think>');
-        if (end >= 0) { thinking += content.slice(0, end); content = content.slice(end + 8); inThinkTag = false; }
-        else { thinking += content; content = ''; }
-      }
-      if (chunk.logprobs && chunk.logprobs.length) for (const lp of chunk.logprobs) onToken(Math.exp(lp.logprob));
-      else if (thinking || content) onToken(null);
-      if (thinking || content) onPiece({ thinking, content });
-      if (chunk.done) {
-        if (chunk.eval_count) hud.tokens = chunk.eval_count;
-        if (chunk.eval_duration) hud.tps = chunk.eval_count / (chunk.eval_duration / 1e9);
-      }
+      if (line) onLine(JSON.parse(line));
     }
   }
+}
+function finalStats(chunk) {
+  if (chunk.eval_count) hud.tokens = chunk.eval_count;
+  if (chunk.eval_duration) hud.tps = chunk.eval_count / (chunk.eval_duration / 1e9);
+}
+
+async function streamOllama(messages, signal, onPiece) {
+  const model = modelSel.value, caps = (modelShow[model] && modelShow[model].capabilities) || [];
+  const body = { model, messages, stream: true, keep_alive: CONFIG.KEEP_ALIVE };
+  if (CONFIG.LOGPROBS) { body.logprobs = true; body.top_logprobs = 5; }
+  if (caps.includes('thinking')) body.think = true;
+
+  let r = await fetch(CONFIG.OLLAMA_URL + '/api/chat', { method: 'POST', body: JSON.stringify(body), signal });
+  if (r.status === 400 && (body.logprobs || body.think)) {      // option not supported: retry without
+    delete body.logprobs; delete body.top_logprobs; delete body.think;
+    r = await fetch(CONFIG.OLLAMA_URL + '/api/chat', { method: 'POST', body: JSON.stringify(body), signal });
+  }
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+
+  let inThinkTag = false;
+  await readLines(r, chunk => {
+    if (chunk.error) throw new Error(chunk.error);
+    const m = chunk.message || {};
+    let thinking = m.thinking || '', content = m.content || '';
+    // Models that put their reasoning inside <think>…</think>
+    if (content.includes('<think>')) { inThinkTag = true; content = content.replace('<think>', ''); }
+    if (inThinkTag) {
+      const end = content.indexOf('</think>');
+      if (end >= 0) { thinking += content.slice(0, end); content = content.slice(end + 8); inThinkTag = false; }
+      else { thinking += content; content = ''; }
+    }
+    let d = null;
+    if (chunk.logprobs && chunk.logprobs.length) {
+      for (const lp of chunk.logprobs) onToken(Math.exp(lp.logprob));
+      const lp = chunk.logprobs.reduce((a, b) => b.logprob < a.logprob ? b : a);
+      d = { conf: Math.exp(lp.logprob), alts: (lp.top_logprobs || []).map(t => [t.token, Math.exp(t.logprob)]) };
+      if (content) pipe('st-out', `« ${show(content)} » · confiance ${(d.conf * 100).toFixed(1)}%`);
+    } else if (thinking || content) onToken(null);
+    if (thinking) pipe('st-out', 'réflexion en cours (texte gris)');
+    if (thinking || content) onPiece({ thinking, content, d });
+    if (chunk.done) { finalStats(chunk); pipeOllamaDone(chunk); }
+  });
+}
+
+// Lab: the local model streams its real internal state with each token
+let labPrompt = 0, labFirst = null;
+async function streamLab(messages, signal, onPiece) {
+  const r = await fetch('lab/chat', { method: 'POST', body: JSON.stringify({ messages }), signal });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+  labFirst = null;
+  await readLines(r, ev => {
+    if (ev.error) throw new Error(ev.error);
+    if (ev.status) addLine('sys', ev.status);
+    if (ev.context) { labPrompt = ev.context.length; neural._graphContext(ev.context); pipe('st-tok', `${fmtInt(labPrompt)} tokens dans le contexte`); }
+    if (ev.done) finalStats(ev);
+    if (ev.token == null) return;
+    onToken(ev.conf);
+    neural._graphAdd(ev.tok, ev.links, ev.conf);
+    labRender(ev); lastEv = ev;
+    if (!labFirst) { labFirst = ev; pipe('st-read', `${fmtInt(ev.input_tokens)} tokens lus en ${ev.step_ms.toFixed(0)} ms (${(ev.input_tokens / ev.step_ms * 1000).toFixed(0)} tok/s)`); }
+    pipe('st-tok', `${fmtInt(ev.context_len)} tokens dans le contexte`);
+    pipe('st-probs', `${fmtInt(labInfo ? labInfo.vocab : 151936)} tokens possibles · incertitude ${ev.entropy.toFixed(2)} bits`);
+    pipe('st-pick', `température ${labInfo ? labInfo.temperature : 0.7} · top-p ${labInfo ? labInfo.top_p : 0.9} → ${fmtInt(ev.kept)} candidat${ev.kept > 1 ? 's' : ''} gardé${ev.kept > 1 ? 's' : ''}`);
+    pipe('st-out', `« ${show(ev.tok)} » · id ${ev.id} · ${(ev.conf * 100).toFixed(1)}% · ${ev.step_ms.toFixed(0)} ms`);
+    pipe('st-mem', `cache KV : ${ev.kv_mb.toFixed(1)} Mo pour ${fmtInt(ev.context_len)} tokens`);
+    onPiece({ content: ev.token, d: { conf: ev.conf, alts: ev.top, ev, node: labPrompt + answer.length } });
+  });
+}
+
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const TILE_W = 76, TILE_H = 64, GAP = 3, LAYERS = 24;
+const lab = { grid: $('grid'), delta: $('delta'), lut: new Uint8Array(256 * 3), img: null, cols: 0, q: null, ev: null };
+function setupGrid(cols) {
+  lab.cols = cols;
+  const rowsN = Math.ceil(LAYERS / cols);
+  lab.grid.width = cols * TILE_W + (cols - 1) * GAP; lab.grid.height = rowsN * TILE_H + (rowsN - 1) * GAP;
+  lab.img = lab.grid.getContext('2d').createImageData(lab.grid.width, lab.grid.height);
+  const d = lab.img.data; for (let i = 3; i < d.length; i += 4) d[i] = 255;
+}
+// More layers per row when the panel is wider
+function layoutGrid() {
+  const inner = sideW - 28, cols = inner >= 8 * TILE_W + 7 * GAP ? 8 : inner >= 6 * TILE_W + 5 * GAP ? 6 : 4;
+  if (cols === lab.cols) return;
+  setupGrid(cols); buildLut();
+  if (lab.ev) labRender(lab.ev);
+}
+setupGrid(4);
+// Colour per int8 activation: theme ramp when activated, theme "neg" colour when inhibited
+function buildLut() {
+  const base = theme.light ? [235, 231, 220] : theme.panel.map(v => Math.min(255, v + 10));
+  const ramp = (stops, t) => { const k = Math.min(stops.length - 2, Math.floor(t * (stops.length - 1))), f = t * (stops.length - 1) - k;
+    return stops[k].map((v, i) => v + (stops[k + 1][i] - v) * f); };
+  const pos = [base, theme.ramp[0].map((v, i) => (v + base[i]) / 2), theme.ramp[0], theme.ramp[2]];
+  const neg = [base, theme.neg.map((v, i) => (v + base[i]) / 2), theme.neg, theme.neg.map(v => Math.min(255, v + 90))];
+  for (let v = -128; v < 128; v++) {
+    const t = Math.min(1, Math.abs(v) / 127);
+    lab.lut.set((v >= 0 ? ramp(pos, t) : ramp(neg, t)).map(Math.round), (v + 128) * 3);
+  }
+  const d = lab.img.data, gap = theme.light ? base : [0, 0, 0];
+  for (let i = 0; i < d.length; i += 4) { d[i] = gap[0]; d[i + 1] = gap[1]; d[i + 2] = gap[2]; }
+  const g = lab.grid.getContext('2d'); g.putImageData(lab.img, 0, 0);
+}
+
+function rows(target, items) {
+  target.replaceChildren(...items.map(([label, value, text, chosen]) => {
+    const row = el('div', 'row' + (chosen ? ' chosen' : ''));
+    const bar = el('span', 'bar'), fill = el('i'); fill.style.width = Math.max(1, value * 100) + '%'; bar.appendChild(fill);
+    row.append(el('span', 't', label.replace(/\n/g, '⏎')), bar, el('span', 'v', text)); return row;
+  }));
+}
+
+function labRender(ev) {
+  // Neuron grid: one pixel per real MLP neuron
+  const COLS = lab.cols;
+  const q = new Int8Array(b64(ev.neurons).buffer), d = lab.img.data, W = lab.grid.width, lut = lab.lut;
+  lab.q = q; lab.ev = ev;
+  const layers = q.length / (TILE_W * TILE_H);
+  for (let L = 0; L < layers; L++) {
+    const ox = (L % COLS) * (TILE_W + GAP), oy = Math.floor(L / COLS) * (TILE_H + GAP), base = L * TILE_W * TILE_H;
+    for (let n = 0; n < TILE_W * TILE_H; n++) {
+      const p = ((oy + (n / TILE_W | 0)) * W + ox + n % TILE_W) * 4, c = (q[base + n] + 128) * 3;
+      d[p] = lut[c]; d[p + 1] = lut[c + 1]; d[p + 2] = lut[c + 2];
+    }
+  }
+  const g = lab.grid.getContext('2d');
+  g.putImageData(lab.img, 0, 0);
+  g.font = '8px ui-monospace, monospace'; g.fillStyle = `rgba(${theme.strong}, .5)`;
+  for (let L = 0; L < layers; L++) g.fillText(L, (L % COLS) * (TILE_W + GAP) + 2, Math.floor(L / COLS) * (TILE_H + GAP) + 9);
+  if ($('gridModal').classList.contains('open')) drawBig();
+
+  // How much each layer changes the hidden state
+  const c = lab.delta, dpr = Math.min(devicePixelRatio || 1, 2);
+  c.width = c.clientWidth * dpr; c.height = c.clientHeight * dpr;
+  const x = c.getContext('2d'), max = Math.max(...ev.delta), bw = c.width / ev.delta.length;
+  ev.delta.forEach((v, i) => {
+    const h = Math.max(1, Math.log1p(v) / Math.log1p(max) * c.height);
+    x.fillStyle = `rgba(${theme.accent},${0.35 + 0.65 * v / max})`;
+    x.fillRect(i * bw + 1, c.height - h, bw - 2, h);
+  });
+
+  rows($('top'), ev.top.map(([t, p]) => [t, p, (p * 100).toFixed(1) + '%', t === ev.tok]));
+  rows($('attn'), ev.attn.map(([t, w]) => [t, w, (w * 100).toFixed(0) + '%']));
+  const strongest = Math.max(...ev.hot.map(h => Math.abs(h[2])));
+  rows($('hot'), ev.hot.map(([L, n, v]) => [`L${L} · #${n}`, Math.abs(v) / strongest, (v > 0 ? '+' : '') + v]));
+  $('labinfo').textContent = `${labInfo ? labInfo.model : ''} · tourne sur ton CPU`;
+}
+
+// Which neuron is under the mouse (canvas drawn at `scale` × the grid size)
+function gridHit(canvas, e, scale) {
+  const r = canvas.getBoundingClientRect();
+  const x = (e.clientX - r.left) * canvas.width / r.width / scale, y = (e.clientY - r.top) * canvas.height / r.height / scale;
+  const col = Math.floor(x / (TILE_W + GAP)), row = Math.floor(y / (TILE_H + GAP));
+  const tx = Math.floor(x - col * (TILE_W + GAP)), ty = Math.floor(y - row * (TILE_H + GAP));
+  if (tx < 0 || ty < 0 || tx >= TILE_W || ty >= TILE_H || col >= lab.cols) return null;
+  const L = row * lab.cols + col; if (L >= LAYERS) return null;
+  return { L, n: ty * TILE_W + tx };
+}
+function gridTip(canvas, e, scale) {
+  const h = lab.q && gridHit(canvas, e, scale);
+  if (!h) return hideTip();
+  const v = lab.q[h.L * TILE_W * TILE_H + h.n] / 127;
+  showTip(e.clientX, e.clientY, t => {
+    t.append(el('div', 'h', `Couche ${h.L} · neurone #${h.n}`));
+    t.append(el('div', null, `Activation : ${v >= 0 ? '+' : ''}${(v * 100).toFixed(0)}%` + (Math.abs(v) > .9 ? ' · parmi les plus forts de la couche' : Math.abs(v) < .1 ? ' · presque éteint' : '')));
+    t.append(el('div', 'note', `pour le token « ${show(lab.ev.tok)} »`));
+  });
+}
+function drawBig() {
+  const big = $('gridBig'), k = Math.max(1, Math.floor(Math.min(innerWidth * 0.94 / lab.grid.width, innerHeight * 0.8 / lab.grid.height)));
+  big.width = lab.grid.width * k; big.height = lab.grid.height * k;
+  big.style.width = big.width + 'px'; big.style.height = big.height + 'px';
+  const g = big.getContext('2d'); g.imageSmoothingEnabled = false;
+  g.drawImage(lab.grid, 0, 0, big.width, big.height);
+  big._scale = k; $('gridTok').textContent = lab.ev ? `token « ${show(lab.ev.tok)} »` : '';
+}
+$('grid').addEventListener('mousemove', e => gridTip($('grid'), e, 1));
+$('grid').addEventListener('mouseleave', hideTip);
+$('grid').addEventListener('click', () => { if (!lab.ev) return; $('gridModal').classList.add('open'); drawBig(); });
+$('gridBig').addEventListener('mousemove', e => gridTip($('gridBig'), e, $('gridBig')._scale));
+$('gridBig').addEventListener('mouseleave', hideTip);
+$('gridModal').addEventListener('click', e => { if (e.target !== $('gridBig')) { $('gridModal').classList.remove('open'); hideTip(); } });
+
+// ---------- Left rail: model card, session, token stream ----------
+const sess = { msgs: 0, tokens: 0, confSum: 0, confN: 0, unsure: 0, genMs: 0 };
+function card(rowsKV) {
+  $('card').replaceChildren(...rowsKV.filter(r => r[1] != null && r[1] !== '').map(([k, v]) => { const d = el('div', 'kv'); d.append(el('span', null, k), el('span', null, v)); return d; }));
+}
+function refreshCard() {
+  if (!live) return card([['mode', 'démo (pas de modèle)']]);
+  if (isLab()) {
+    const L = labInfo || {};
+    return card([['nom', 'Qwen2.5-0.5B-Instruct'], ['paramètres', L.params ? (L.params / 1e6).toFixed(0) + ' M' : '494 M'], ['précision', 'float32 (non compressé)'],
+      ['couches', L.layers || 24], ['neurones MLP', fmtInt((L.layers || 24) * (L.width || 4864))], ['vocabulaire', fmtInt(L.vocab || 151936)], ['calcul', 'PyTorch · CPU'], ['activations', 'visibles']]);
+  }
+  const s = modelShow[modelSel.value] || {}, m = modelInfo(s), d = s.details || {};
+  card([['nom', modelSel.value], ['famille', d.family], ['paramètres', d.parameter_size], ['compression', d.quantization_level],
+    ['couches', m.layers], ['experts', m.experts ? `${m.experts} (${m.used} actifs)` : null], ['contexte max', m.ctx ? fmtInt(m.ctx) : null],
+    ['réflexion', (s.capabilities || []).includes('thinking') ? 'oui' : 'non'], ['calcul', 'Ollama · CPU']]);
+}
+function refreshSession() {
+  const avg = sess.confN ? sess.confSum / sess.confN : null;
+  $('session').replaceChildren(...[
+    ['messages', sess.msgs], ['tokens écrits', fmtInt(sess.tokens)],
+    ['confiance moyenne', avg == null ? '—' : (avg * 100).toFixed(0) + '%'],
+    ['mots hésitants', sess.confN ? `${sess.unsure} (${(sess.unsure / sess.confN * 100).toFixed(0)}%)` : '—'],
+    ['temps de calcul', (sess.genMs / 1000).toFixed(0) + ' s'],
+  ].map(([k, v]) => { const d = el('div', 'kv'); d.append(el('span', null, k), el('span', null, v)); return d; }));
+}
+function tick(span, d) {
+  const chip = el('span', d && d.conf != null ? (d.conf < 0.3 ? 'u2' : d.conf < 0.6 ? 'u1' : '') : '', span.textContent.trim() || '␣');
+  chip.title = d && d.conf != null ? `confiance ${(d.conf * 100).toFixed(1)}%` : '';
+  chip.addEventListener('click', () => { span.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); span.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); setTimeout(() => span.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })), 2500); });
+  const t = $('ticker'); t.prepend(chip);
+  while (t.children.length > 120) t.lastChild.remove();
 }
 
 // Simulated reply when Ollama is not reachable
 async function streamDemo(messages, signal, onPiece) {
   const q = messages[messages.length - 1].content;
   const thinking = `L'utilisateur écrit « ${q.slice(0, 60)} ». Je suis en mode démo, je n'ai pas de vrai modèle : je simule une réponse.`;
-  const answer = "Ceci est une réponse simulée : Ollama n'est pas joignable. Chaque mot que tu vois arriver déclenche un influx dans la sphère, et sa couleur suit une confiance inventée (rouge = sûr, jaune = hésitant). Lance Ollama puis clique sur « MODE DÉMO » en haut pour passer aux vrais modèles.";
+  const answerText = "Ceci est une réponse simulée : Ollama n'est pas joignable. Chaque mot que tu vois arriver déclenche un influx dans la sphère, et sa couleur suit une confiance inventée. Lance Ollama puis clique sur « MODE DÉMO » en haut pour passer aux vrais modèles.";
   const sleep = ms => new Promise((res, rej) => {
     const t = setTimeout(res, ms);
     signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('aborted', 'AbortError')); }, { once: true });
   });
   await sleep(500);
-  for (const [field, text] of [['thinking', thinking], ['content', answer]]) {
+  for (const [field, text] of [['thinking', thinking], ['content', answerText]]) {
     for (const tok of text.match(/\s*[^\s]+/g)) {
       await sleep(25 + Math.random() * 60);
-      onToken(Math.random() < .2 ? Math.random() * .6 : .8 + Math.random() * .2);
-      onPiece({ [field]: tok });
+      const conf = Math.random() < .2 ? Math.random() * .6 : .8 + Math.random() * .2;
+      onToken(conf);
+      onPiece({ [field]: tok, d: { conf, alts: null } });
     }
   }
 }
 
+// ---------- System monitor ----------
+const sysHist = [];
+let sysCtx = null;
+for (let i = 0; i < 6; i++) $('cores').appendChild(el('i'));
+async function pollSys() {
+  let s;
+  try { const r = await fetch('sys'); if (!r.ok) throw 0; s = await r.json(); } catch { $('sysbox').style.display = 'none'; return; }
+  sysAvailable = true; $('sysbox').style.display = '';
+  const ram = s.ram_used / s.ram_total;
+  $('cpuBar').style.width = s.cpu + '%'; $('cpuV').textContent = s.cpu.toFixed(0) + '%';
+  $('ramBar').style.width = ram * 100 + '%'; $('ramV').textContent = `${fmtGB(s.ram_used)} / ${fmtGB(s.ram_total).replace(' Go', '')}`;
+  $('gpuName').textContent = (s.gpu_name || 'GPU').replace('Intel ', '').replace(' Graphics', '');
+  $('gpuBar').style.width = (s.gpu || 0) + '%'; $('gpuV').textContent = s.gpu == null ? 'n/d' : s.gpu + '%';
+  const cores = $('cores').children;
+  if (cores.length !== s.cores.length) { $('cores').replaceChildren(...s.cores.map(() => el('i'))); }
+  s.cores.forEach((v, i) => { $('cores').children[i].style.height = Math.max(4, v) + '%'; });
+
+  const items = [];
+  for (const [name, p] of Object.entries(s.procs)) items.push([name, p.ram / s.ram_total, `${fmtGB(p.ram)} · ${(p.cpu / s.cpu_count).toFixed(0)}%`]);
+  rows($('procs'), items);
+  const loaded = s.ollama || [];
+  sysCtx = loaded.length && loaded.find(m => m.name === modelSel.value) ? loaded.find(m => m.name === modelSel.value).context : null;
+  $('sysnote').textContent = loaded.length
+    ? 'Chargés dans Ollama : ' + loaded.map(m => `${m.name} (${fmtGB(m.size)}, ${m.vram ? Math.round(m.vram / m.size * 100) + '% GPU' : '100% CPU'})`).join(', ')
+    : 'Aucun modèle chargé dans Ollama pour le moment.';
+  if (!isLab()) {
+    const cur = loaded.find(m => m.name === modelSel.value);
+    pipe('st-mem', cur ? `modèle en RAM : ${fmtGB(cur.size)} · ${cur.vram ? 'en partie sur le GPU' : 'calculé par le CPU'} · contexte max ${fmtInt(cur.context || 0)} tokens` : 'modèle pas encore chargé');
+  }
+
+  sysHist.push([s.cpu / 100, (s.gpu || 0) / 100, ram]); if (sysHist.length > 60) sysHist.shift();
+  const c = $('spark'), dpr = Math.min(devicePixelRatio || 1, 2);
+  c.width = c.clientWidth * dpr; c.height = c.clientHeight * dpr;
+  const x = c.getContext('2d');
+  [[0, theme.accent, 1], [1, theme.user, 1], [2, theme.fg, .6]].forEach(([k, col, a]) => {
+    x.strokeStyle = `rgba(${col},${a})`; x.lineWidth = 1.4 * dpr; x.beginPath();
+    sysHist.forEach((v, i) => { const X = c.width * (i + 60 - sysHist.length) / 59, Y = c.height - 2 - v[k] * (c.height - 4); i ? x.lineTo(X, Y) : x.moveTo(X, Y); });
+    x.stroke();
+  });
+}
+setInterval(pollSys, 1000); pollSys();
+
+// ---------- Inspecting the answer ----------
+// Every token of an answer is a <span> carrying what the model knew: confidence, alternatives, and in the Lab
+// the real internal state. In Ollama mode the sphere maps the last answer; in the Lab it draws real attention.
+let lastEv = null, answer = [], pinnedNode = -1;
+const tip = $('tip');
+
+function startAnswer() {
+  for (const s of answer) if (s._d) delete s._d.ev;   // full neuron grids are only kept for the latest answer
+  answer = []; pinnedNode = -1; neural._pin(-1); neural._graphFocus(-1);
+  refreshMap();
+}
+
+function addToken(target, text, d) {
+  const span = el('span', 'tk', text);
+  span._d = d; span._k = answer.length;
+  if (d && d.conf != null) span.classList.add(d.conf < 0.3 ? 'u2' : d.conf < 0.6 ? 'u1' : 'ok');
+  target.appendChild(span); answer.push(span); tick(span, d);
+  if (answer.length % 4 === 1 || !generating) refreshMap();
+}
+
+// Answer map (Ollama): token k of the last answer sits on point k·N/T (top of the sphere = start, bottom = end)
+const nodeOfToken = k => Math.round(k * (CONFIG.NEURONS - 1) / Math.max(1, answer.length - 1));
+function tokensOfNode(i) { return answer.filter(s => nodeOfToken(s._k) === i); }
+function refreshMap() {
+  if (isLab() && live) { neural._overlay(null); return; }
+  const N = CONFIG.NEURONS, min = new Float32Array(N).fill(2);
+  for (const s of answer) { const i = nodeOfToken(s._k), c = s._d ? s._d.conf : 1; if (c != null && c < min[i]) min[i] = c; }
+  const values = new Float32Array(N), conf = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    if (min[i] > 1.5) continue;
+    conf[i] = min[i]; values[i] = min[i] < 0.6 ? 0.45 + (0.6 - min[i]) : 0.12;
+  }
+  neural._overlay(values, conf);
+}
+
+function showTip(x, y, build) {
+  tip.replaceChildren(); build(tip); tip.style.display = 'block';
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.max(8, Math.min(innerWidth - r.width - 8, x + 14)) + 'px';
+  tip.style.top = Math.max(8, y - r.height - 10) + 'px';
+}
+function hideTip() { tip.style.display = 'none'; }
+function attnTip(t, links, k) {
+  const tokens = links.map(([pos, w]) => [neural._graphToken(pos).text, w]).filter(([w]) => w && w.trim());
+  t.append(el('div', 'h2', 'Pour écrire ce mot, il regardait :'));
+  const box = el('div'); rows(box, tokens.slice(0, 6).map(([w, v]) => [w, v / tokens[0][1], (v * 100).toFixed(0) + '%'])); t.append(box);
+}
+
+// Hovering a word: confidence, alternatives; in the Lab the sphere and panel replay that moment
+logEl.addEventListener('mouseover', e => {
+  const span = e.target.closest('.tk'); if (!span || !span._d) return;
+  const d = span._d, r = span.getBoundingClientRect();
+  showTip(r.left, r.top, t => {
+    t.append(el('div', 'h', `« ${show(span.textContent)} »`));
+    if (d.conf != null) t.append(el('div', null, `Confiance : ${(d.conf * 100).toFixed(1)}%` + (d.conf < 0.3 ? ' · le modèle devine' : d.conf < 0.6 ? ' · hésitant' : '')));
+    if (d.alts && d.alts.length) {
+      t.append(el('div', 'h2', 'Il hésitait entre :'));
+      const box = el('div'); rows(box, d.alts.map(([w, p]) => [w, p, (p * 100).toFixed(1) + '%', w === span.textContent])); t.append(box);
+    }
+    if (d.node != null && neural.graphOn && neural._graphToken(d.node).attn) attnTip(t, neural._graphToken(d.node).attn);
+  });
+  if (d.node != null && neural.graphOn) { neural._graphFocus(d.node); if (d.ev) labRender(d.ev); }
+  else if (answer.includes(span)) neural._pin(nodeOfToken(span._k));
+});
+logEl.addEventListener('mouseout', e => {
+  const span = e.target.closest('.tk'); if (!span || (e.relatedTarget && span.contains(e.relatedTarget))) return;
+  hideTip();
+  if (span._d && span._d.node != null) { neural._graphFocus(pinnedNode); if (lastEv) labRender(lastEv); }
+  neural._pin(pinnedNode);
+  if (pinnedNode >= 0) inspectPoint(pinnedNode);
+});
+
+// Hovering / clicking a point of the sphere
+function clearLit() { for (const s of logEl.querySelectorAll('.tk.lit')) { s.classList.remove('lit'); s.style.background = ''; } }
+function inspectPoint(i, x, y, click) {
+  if (click) { pinnedNode = i === pinnedNode ? -1 : i; neural._pin(pinnedNode); if (neural.graphOn) neural._graphFocus(pinnedNode); }
+  if (i < 0) { hideTip(); clearLit(); if (pinnedNode >= 0 && !click) return inspectPoint(pinnedNode); return; }
+  if (x == null) { const p = neural._point(i); x = p.x; y = p.y; }
+  clearLit();
+  if (neural.graphOn) {
+    // Lab: each point is a token of the context, its links are the real attention it used
+    const tk = neural._graphToken(i);
+    if (!click && pinnedNode < 0) neural._graphFocus(tk.attn ? i : -1);
+    const span = tk.gen ? answer[i - labPrompt] : null;
+    if (span) { span.classList.add('lit'); span.style.background = 'rgba(var(--line), .18)'; }
+    for (const [pos, w] of tk.attn || []) {
+      const s = answer[pos - labPrompt]; if (s && w > 0.04) { s.classList.add('lit'); s.style.background = `rgba(var(--accent), ${Math.min(0.6, w * 3).toFixed(2)})`; }
+    }
+    showTip(x, y, t => {
+      t.append(el('div', 'h', `« ${show(tk.text)} »`));
+      t.append(el('div', null, tk.special ? 'Token spécial (balise de la conversation)' : tk.gen ? `Écrit par le modèle · confiance ${(tk.conf * 100).toFixed(1)}%` : 'Fait partie du contexte (prompt système, question, historique)'));
+      t.append(el('div', 'note', `Position ${i + 1} sur ${tk.n}`));
+      if (tk.attn) attnTip(t, tk.attn);
+      t.append(el('div', 'h2', pinnedNode === i ? 'Épinglé · Échap pour relâcher.' : tk.attn ? 'Clique pour épingler ses liens.' : ''));
+    });
+  } else {
+    const toks = tokensOfNode(i);
+    if (!toks.length) return showTip(x, y, t => t.append(el('div', null, answer.length ? 'Aucun mot ici.' : 'Chaque point montrera un passage de la prochaine réponse.')));
+    const k0 = toks[0]._k, k1 = toks[toks.length - 1]._k;
+    const around = answer.slice(Math.max(0, k0 - 6), k1 + 7);
+    toks.forEach(s => { s.classList.add('lit'); s.style.background = 'rgba(var(--line), .18)'; });
+    if (click) toks[0].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const conf = Math.min(...toks.map(s => s._d && s._d.conf != null ? s._d.conf : 1));
+    showTip(x, y, t => {
+      t.append(el('div', 'h', `Mots ${k0 + 1}${k1 > k0 ? '–' + (k1 + 1) : ''} sur ${answer.length}`));
+      const p = el('div', 'ctx'); for (const s of around) p.append(el(toks.includes(s) ? 'b' : 'span', null, s.textContent)); t.append(p);
+      t.append(el('div', null, `Confiance minimale : ${(conf * 100).toFixed(1)}%` + (conf < 0.3 ? ' · le modèle devine' : '')));
+    });
+  }
+}
+neural._on('hover', (i, x, y) => inspectPoint(i, x, y));
+neural._on('click', (i, x, y) => inspectPoint(i, x, y, true));
+
+// ---------- Send ----------
 async function send(text) {
   if (generating || !text.trim()) return;
   if (!live) await connect(true);
@@ -506,28 +1340,34 @@ async function send(text) {
   addLine('user', text);
 
   const box = addLine('streaming', '');
-  const thinkEl = document.createElement('div'), ansEl = document.createElement('div');
-  thinkEl.className = 'think'; ansEl.className = 'ans'; box.append(thinkEl, ansEl);
+  const thinkEl = el('div', 'think'), ansEl = el('div', 'ans');
+  box.append(thinkEl, ansEl);
   let thinking = '', content = '';
+  startAnswer();
 
-  generating = true; controller = new AbortController(); resetStats();
-  $('send').textContent = '■'; neural.think(true);
+  generating = true; controller = new AbortController(); resetStats(); document.body.classList.add('busy');
+  $('send').textContent = '■'; neural.think(true); $('st-read').classList.add('on');
+  pipe('st-read', 'lecture en cours…');
   try {
-    await (live ? streamOllama : streamDemo)(history, controller.signal, piece => {
+    await (!live ? streamDemo : isLab() ? streamLab : streamOllama)(history, controller.signal, piece => {
       const stick = atBottom();
       if (piece.thinking) { thinking += piece.thinking; thinkEl.textContent = thinking; }
-      if (piece.content) { content += piece.content; ansEl.textContent = content; neural.think(false); }
+      if (piece.content != null && piece.content !== '' || piece.d && piece.d.node != null) {
+        content += piece.content || ''; addToken(ansEl, piece.content || '', piece.d); neural.think(false);
+      }
       if (stick) logEl.scrollTop = logEl.scrollHeight;
     });
   } catch (e) {
-    if (e.name === 'AbortError') ansEl.textContent = content + (content ? ' ' : '') + '⏹';
+    if (e.name === 'AbortError') ansEl.append(content ? ' ⏹' : '⏹');
     else {
       addLine('err', 'Erreur : ' + (e.message || e));
-      if (e instanceof TypeError) setMode(false, 'Connexion à Ollama perdue. Mode démo.');
+      if (e instanceof TypeError) connect();   // connection lost: refresh what is reachable
     }
   } finally {
-    generating = false; controller = null; neural.think(false);
+    generating = false; controller = null; neural.think(false); $('st-read').classList.remove('on'); document.body.classList.remove('busy');
+    sess.msgs++; sess.genMs += performance.now() - hud.start; refreshSession();
     box.classList.remove('streaming'); $('send').textContent = '↵';
+    refreshMap();
     if (content || thinking) history.push({ role: 'assistant', content });
     else history.pop();
   }
@@ -538,10 +1378,19 @@ $('form').addEventListener('submit', e => {
   if (generating) { controller.abort(); return; }
   const text = input.value; input.value = ''; send(text);
 });
-addEventListener('keydown', e => { if (e.key === 'Escape' && controller) controller.abort(); });
+addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if ($('gridModal').classList.contains('open')) { $('gridModal').classList.remove('open'); hideTip(); return; }
+  if (controller) controller.abort(); else inspectPoint(-1, 0, 0, true);
+});
 
+// ---------- Start ----------
+applyTheme(localStorage.getItem('neural.theme') || 'nuit');
+setSide(localStorage.getItem('neural.side') ? localStorage.getItem('neural.side') === '1' : innerWidth > 900);
+setExplain(localStorage.getItem('neural.explain') === '1');
+refreshSession();
 addLine('sys', 'Neural Chat — connexion à Ollama…');
-connect().then(ok => ok && addLine('sys', `Connecté. Modèle : ${modelSel.value}. Fais glisser la sphère pour la tourner.`));
+connect().then(ok => ok && addLine('sys', `Connecté. Modèle : ${modelSel.selectedOptions[0].text}. Survole les mots et la sphère pour voir ce que le modèle faisait.`));
 input.focus();
 </script>
 </body>
